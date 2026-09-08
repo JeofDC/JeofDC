@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DBA Request & Automation Portal</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans">
+
+    <!-- Top Navigation Header -->
+    <header class="bg-slate-800 border-b border-slate-700 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <div class="bg-indigo-600 p-2 rounded-lg text-white font-bold">
+                    <i class="fa-solid fa-database text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-white">AutoDBA <span class="text-indigo-400 text-sm font-normal">Self-Service Portal</span></h1>
+                    <p class="text-xs text-slate-400">Automated Database Administration & Schema Governance Engine</p>
+                </div>
+            </div>
+
+            <!-- Role Switcher & Nav Tabs -->
+            <div class="flex items-center space-x-4">
+                <div class="bg-slate-700 p-1 rounded-lg flex text-xs font-semibold">
+                    <button id="dev-role-btn" class="px-3 py-1.5 rounded-md transition-colors bg-indigo-600 text-white shadow" onclick="switchRole('DEVELOPER')">
+                        <i class="fa-solid fa-code mr-1"></i> Developer Mode
+                    </button>
+                    <button id="dba-role-btn" class="px-3 py-1.5 rounded-md transition-colors text-slate-300 hover:text-white" onclick="switchRole('DBA')">
+                        <i class="fa-solid fa-user-shield mr-1"></i> DBA Admin Mode
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-grow w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Left Navigation Sidebar -->
+        <aside class="lg:col-span-3 space-y-4">
+            <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 shadow-sm">
+                <div id="developer-side-menu">
+                    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Developer Actions</h2>
+                    <nav class="space-y-1">
+                        <button onclick="setActiveTab('new-request')" id="nav-new-request" class="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium bg-slate-700 text-white">
+                            <i class="fa-solid fa-plus-circle text-indigo-400"></i>
+                            <span>New DBA Request</span>
+                        </button>
+                        <button onclick="setActiveTab('my-requests')" id="nav-my-requests" class="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700">
+                            <i class="fa-solid fa-list-check text-emerald-400"></i>
+                            <span>Request Status Tracker</span>
+                        </button>
+                        <button onclick="setActiveTab('schema-browser')" id="nav-schema-browser" class="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700">
+                            <i class="fa-solid fa-table text-amber-400"></i>
+                            <span>DB Schema Browser</span>
+                        </button>
+                    </nav>
+                </div>
+
+                <div id="dba-side-menu" class="hidden">
+                    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">DBA Management</h2>
+                    <nav class="space-y-1">
+                        <button onclick="setActiveTab('dba-queue')" id="nav-dba-queue" class="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium bg-slate-700 text-white">
+                            <i class="fa-solid fa-inbox text-indigo-400"></i>
+                            <span>Approval Queue</span>
+                            <span id="pending-badge" class="ml-auto bg-amber-500 text-slate-950 font-bold px-2 py-0.5 rounded-full text-xs">0</span>
+                        </button>
+                        <button onclick="setActiveTab('dba-history')" id="nav-dba-history" class="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700">
+                            <i class="fa-solid fa-clock-rotate-left text-cyan-400"></i>
+                            <span>Execution History</span>
+                        </button>
+                        <button onclick="setActiveTab('schema-browser')" id="nav-dba-schema" class="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700">
+                            <i class="fa-solid fa-database text-purple-400"></i>
+                            <span>Target DB Schema</span>
+                        </button>
+                    </nav>
+                </div>
+            </div>
+
+            <!-- Active Database Status Widget -->
+            <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 shadow-sm text-xs space-y-2">
+                <div class="flex items-center justify-between text-slate-400">
+                    <span>Target Database</span>
+                    <span class="inline-flex items-center text-emerald-400 font-semibold"><span class="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span> Connected</span>
+                </div>
+                <div class="text-slate-200 font-mono text-xs truncate bg-slate-900 p-2 rounded border border-slate-700">
+                    sqlite:///./target_managed.db
+                </div>
+                <div class="flex justify-between pt-1 text-slate-400">
+                    <span>Tables Active: <strong id="widget-table-count" class="text-white">0</strong></span>
+                    <span>Permissions: <strong id="widget-perm-count" class="text-white">0</strong></span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right Content Section -->
+        <section class="lg:col-span-9">
+
+            <!-- TAB 1: New DBA Request Form Wizard -->
+            <div id="tab-new-request" class="tab-content bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-sm">
+                <div class="border-b border-slate-700 pb-4 mb-6 flex justify-between items-center">
+                    <div>
+                        <h2 class="text-lg font-bold text-white flex items-center">
+                            <i class="fa-solid fa-pen-to-square text-indigo-400 mr-2"></i> Submit Database Request
+                        </h2>
+                        <p class="text-xs text-slate-400 mt-1">Select the requested service type and fill in structure parameters.</p>
+                    </div>
+                </div>
+
+                <form id="dba-request-form" onsubmit="handleRequestSubmit(event)">
+                    <!-- Developer Info & Service Type -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-300 mb-1">Developer Name / ID</label>
+                            <input type="text" id="dev-name" required value="Alex (Backend Dev)" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-300 mb-1">Service Request Type</label>
+                            <select id="req-type" onchange="onReqTypeChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                                <option value="CREATE_TABLE">Create New Table</option>
+                                <option value="ALTER_TABLE">Alter / Update Existing Table</option>
+                                <option value="DROP_TABLE">Delete / Drop Table</option>
+                                <option value="GRANT_ACCESS">Request Access / Permissions</option>
+                                <option value="CUSTOM_SQL">Custom SQL / Migration Service</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Request Title</label>
+                        <input type="text" id="req-title" required placeholder="e.g. Create products table for inventory service" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                    </div>
+
+                    <div class="mb-6">
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Business Justification / Notes</label>
+                        <textarea id="req-description" rows="2" placeholder="Explain why this database structure change is needed..." class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"></textarea>
+                    </div>
+
+                    <!-- DYNAMIC REQUEST FORM SECTIONS -->
+
+                    <!-- Section: CREATE_TABLE -->
+                    <div id="form-section-CREATE_TABLE" class="form-section space-y-4 bg-slate-900/50 p-4 rounded-xl border border-slate-700 mb-6">
+                        <h3 class="text-sm font-semibold text-indigo-400 flex items-center">
+                            <i class="fa-solid fa-table-cells mr-2"></i> Table & Columns Definition
+                        </h3>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-400 mb-1">Table Name</label>
+                            <input type="text" id="create-table-name" oninput="generateLiveSQLPreview()" placeholder="e.g. orders" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                        </div>
+
+                        <div>
+                            <div class="flex justify-between items-center mb-2">
+                                <label class="text-xs font-medium text-slate-400">Columns Builder</label>
+                                <button type="button" onclick="addColumnRow()" class="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded transition">
+                                    <i class="fa-solid fa-plus mr-1"></i> Add Column
+                                </button>
+                            </div>
+                            <div class="space-y-2" id="columns-container">
+                                <!-- Column rows added dynamically -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section: ALTER_TABLE -->
+                    <div id="form-section-ALTER_TABLE" class="form-section hidden space-y-4 bg-slate-900/50 p-4 rounded-xl border border-slate-700 mb-6">
+                        <h3 class="text-sm font-semibold text-indigo-400 flex items-center">
+                            <i class="fa-solid fa-wrench mr-2"></i> Alter Table Parameters
+                        </h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Select Target Table</label>
+                                <select id="alter-table-select" onchange="generateLiveSQLPreview()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                                    <!-- Populated dynamically -->
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Alter Action</label>
+                                <select id="alter-action-select" onchange="toggleAlterFields(); generateLiveSQLPreview();" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                                    <option value="ADD_COLUMN">Add New Column</option>
+                                    <option value="RENAME_TABLE">Rename Table</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div id="alter-add-col-group" class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">New Column Name</label>
+                                <input type="text" id="alter-col-name" oninput="generateLiveSQLPreview()" placeholder="e.g. status" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Data Type</label>
+                                <select id="alter-col-type" onchange="generateLiveSQLPreview()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm">
+                                    <option value="TEXT">TEXT</option>
+                                    <option value="INTEGER">INTEGER</option>
+                                    <option value="REAL">REAL</option>
+                                    <option value="VARCHAR(255)">VARCHAR(255)</option>
+                                    <option value="DATETIME">DATETIME</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Default Value</label>
+                                <input type="text" id="alter-col-default" oninput="generateLiveSQLPreview()" placeholder="e.g. active" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm">
+                            </div>
+                        </div>
+
+                        <div id="alter-rename-group" class="hidden">
+                            <label class="block text-xs font-medium text-slate-400 mb-1">New Table Name</label>
+                            <input type="text" id="alter-new-table-name" oninput="generateLiveSQLPreview()" placeholder="e.g. archived_orders" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                        </div>
+                    </div>
+
+                    <!-- Section: DROP_TABLE -->
+                    <div id="form-section-DROP_TABLE" class="form-section hidden space-y-4 bg-slate-900/50 p-4 rounded-xl border border-red-900/50 mb-6">
+                        <h3 class="text-sm font-semibold text-red-400 flex items-center">
+                            <i class="fa-solid fa-triangle-exclamation mr-2"></i> Table Deletion Parameters
+                        </h3>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-400 mb-1">Select Table To Drop</label>
+                            <select id="drop-table-select" onchange="generateLiveSQLPreview()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-500">
+                                <!-- Populated dynamically -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Section: GRANT_ACCESS -->
+                    <div id="form-section-GRANT_ACCESS" class="form-section hidden space-y-4 bg-slate-900/50 p-4 rounded-xl border border-slate-700 mb-6">
+                        <h3 class="text-sm font-semibold text-emerald-400 flex items-center">
+                            <i class="fa-solid fa-key mr-2"></i> Access & Privilege Request
+                        </h3>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Target User / Role</label>
+                                <input type="text" id="grant-username" oninput="generateLiveSQLPreview()" placeholder="e.g. dev_analyst" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Target Object / Table</label>
+                                <input type="text" id="grant-object" oninput="generateLiveSQLPreview()" placeholder="e.g. orders or *" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Access Level</label>
+                                <select id="grant-permission" onchange="generateLiveSQLPreview()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                                    <option value="READ">READ (SELECT)</option>
+                                    <option value="WRITE">WRITE (INSERT/UPDATE/DELETE)</option>
+                                    <option value="ADMIN">ADMIN (ALL PRIVILEGES)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section: CUSTOM_SQL -->
+                    <div id="form-section-CUSTOM_SQL" class="form-section hidden space-y-4 bg-slate-900/50 p-4 rounded-xl border border-slate-700 mb-6">
+                        <h3 class="text-sm font-semibold text-purple-400 flex items-center">
+                            <i class="fa-solid fa-code mr-2"></i> Custom DDL / Migration SQL Query
+                        </h3>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-400 mb-1">SQL Statements</label>
+                            <textarea id="custom-sql-query" oninput="generateLiveSQLPreview()" rows="4" placeholder="CREATE INDEX idx_user_email ON users(email);" class="w-full font-mono text-xs bg-slate-950 border border-slate-700 rounded-lg p-3 text-emerald-400 focus:outline-none focus:border-purple-500"></textarea>
+                        </div>
+                    </div>
+
+                    <!-- LIVE SQL PREVIEW -->
+                    <div class="mb-6">
+                        <div class="flex justify-between items-center mb-1">
+                            <label class="text-xs font-semibold text-slate-300">Generated Target SQL Preview</label>
+                            <span class="text-xs text-indigo-400 font-mono"><i class="fa-solid fa-bolt mr-1"></i> Real-time</span>
+                        </div>
+                        <pre id="live-sql-preview" class="bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-xs text-emerald-400 overflow-x-auto min-h-[60px]">-- Fill parameters above to generate SQL preview</pre>
+                    </div>
+
+                    <div class="flex justify-end">
+                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-lg font-medium text-sm transition shadow-lg shadow-indigo-600/30 flex items-center">
+                            <i class="fa-solid fa-paper-plane mr-2"></i> Submit Request to DBA
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- TAB 2: Developer Status Tracker -->
+            <div id="tab-my-requests" class="tab-content hidden bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-sm">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-700 pb-4 mb-6 gap-3">
+                    <div>
+                        <h2 class="text-lg font-bold text-white flex items-center">
+                            <i class="fa-solid fa-list-check text-emerald-400 mr-2"></i> My Service Requests Tracker
+                        </h2>
+                        <p class="text-xs text-slate-400 mt-1">Monitor DBA approval status and automatic execution results in real-time.</p>
+                    </div>
+
+                    <div class="flex items-center space-x-2">
+                        <select id="filter-status" onchange="loadRequestsList()" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-300">
+                            <option value="">All Statuses</option>
+                            <option value="PENDING">PENDING</option>
+                            <option value="COMPLETED">COMPLETED</option>
+                            <option value="REJECTED">REJECTED</option>
+                            <option value="FAILED">FAILED</option>
+                            <option value="CANCELLED">CANCELLED</option>
+                        </select>
+                        <button onclick="loadRequestsList()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-xs">
+                            <i class="fa-solid fa-rotate mr-1"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs text-slate-300">
+                        <thead class="text-xs text-slate-400 uppercase bg-slate-900/60 border-b border-slate-700">
+                            <tr>
+                                <th class="p-3">ID</th>
+                                <th class="p-3">Type</th>
+                                <th class="p-3">Title & Developer</th>
+                                <th class="p-3">Status</th>
+                                <th class="p-3">Created</th>
+                                <th class="p-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="requests-table-body" class="divide-y divide-slate-700/50">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TAB 3: DBA Approval Queue -->
+            <div id="tab-dba-queue" class="tab-content hidden bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-sm">
+                <div class="border-b border-slate-700 pb-4 mb-6">
+                    <h2 class="text-lg font-bold text-white flex items-center">
+                        <i class="fa-solid fa-user-check text-indigo-400 mr-2"></i> Pending DBA Approval Requests
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1">Review pending requests, validate SQL safety, and approve for automatic target execution.</p>
+                </div>
+
+                <div id="dba-queue-container" class="space-y-4">
+                    <!-- Cards populated dynamically -->
+                </div>
+            </div>
+
+            <!-- TAB 4: DBA Execution History -->
+            <div id="tab-dba-history" class="tab-content hidden bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-sm">
+                <div class="border-b border-slate-700 pb-4 mb-6">
+                    <h2 class="text-lg font-bold text-white flex items-center">
+                        <i class="fa-solid fa-clock-rotate-left text-cyan-400 mr-2"></i> Automation Execution History
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1">Full audit log of executed or rejected database changes.</p>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs text-slate-300">
+                        <thead class="text-xs text-slate-400 uppercase bg-slate-900/60 border-b border-slate-700">
+                            <tr>
+                                <th class="p-3">ID</th>
+                                <th class="p-3">Developer</th>
+                                <th class="p-3">Request</th>
+                                <th class="p-3">Status</th>
+                                <th class="p-3">Executed At</th>
+                                <th class="p-3 text-right">Log Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dba-history-table-body" class="divide-y divide-slate-700/50">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TAB 5: Schema Browser -->
+            <div id="tab-schema-browser" class="tab-content hidden bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-sm">
+                <div class="flex justify-between items-center border-b border-slate-700 pb-4 mb-6">
+                    <div>
+                        <h2 class="text-lg font-bold text-white flex items-center">
+                            <i class="fa-solid fa-database text-purple-400 mr-2"></i> Target Database Schema Browser
+                        </h2>
+                        <p class="text-xs text-slate-400 mt-1">Active database tables, column types, keys, and user permissions.</p>
+                    </div>
+                    <button onclick="loadSchemaBrowser()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs font-medium">
+                        <i class="fa-solid fa-rotate mr-1"></i> Refresh Schema
+                    </button>
+                </div>
+
+                <div class="space-y-6">
+                    <div>
+                        <h3 class="text-sm font-semibold text-slate-200 mb-3 flex items-center">
+                            <i class="fa-solid fa-table mr-2 text-indigo-400"></i> Active Database Tables
+                        </h3>
+                        <div id="schema-tables-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <!-- Tables rendered dynamically -->
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3 class="text-sm font-semibold text-slate-200 mb-3 flex items-center">
+                            <i class="fa-solid fa-shield-halved mr-2 text-emerald-400"></i> Active Access Permissions
+                        </h3>
+                        <div class="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
+                            <table class="w-full text-left text-xs text-slate-300">
+                                <thead class="bg-slate-950 text-slate-400 uppercase border-b border-slate-800">
+                                    <tr>
+                                        <th class="p-2.5">User/Role</th>
+                                        <th class="p-2.5">Target Object</th>
+                                        <th class="p-2.5">Permission</th>
+                                        <th class="p-2.5">Granted At</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="schema-permissions-body" class="divide-y divide-slate-800">
+                                    <!-- Permissions rendered dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+    </main>
+
+    <!-- Modal for Request Details & Execution Logs -->
+    <div id="details-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b border-slate-700 pb-3">
+                <h3 class="text-base font-bold text-white flex items-center" id="modal-title">
+                    Request Details
+                </h3>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-white text-lg">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div id="modal-content" class="space-y-4 text-xs text-slate-300">
+                <!-- Content injected dynamically -->
+            </div>
+
+            <div class="flex justify-end pt-2 border-t border-slate-700">
+                <button onclick="closeModal()" class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg font-medium text-xs">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

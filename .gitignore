@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+app_meta.db
+target_managed.db
+.pytest_cache/
