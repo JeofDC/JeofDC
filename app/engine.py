@@ -17,23 +17,46 @@ class SQLGenerator:
             if not columns:
                 raise ValueError("At least one column is required for CREATE_TABLE.")
 
+            is_sqlite = target_engine.dialect.name == "sqlite"
+
             col_defs = []
             for col in columns:
                 c_name = col.get("name", "").strip()
                 c_type = col.get("type", "TEXT").upper().strip()
-                c_pk = " PRIMARY KEY" if col.get("primary_key") else ""
-                c_auto = " AUTOINCREMENT" if col.get("autoincrement") and col.get("primary_key") else ""
-                c_nn = " NOT NULL" if col.get("not_null") and not col.get("primary_key") else ""
-                c_unique = " UNIQUE" if col.get("unique") else ""
-                c_default = f" DEFAULT '{col.get('default')}'" if col.get("default") is not None and col.get("default") != "" else ""
-                col_defs.append(f"  {c_name} {c_type}{c_pk}{c_auto}{c_nn}{c_unique}{c_default}")
+                c_pk = col.get("primary_key", False)
+                c_auto = col.get("autoincrement", False)
+                c_nn = col.get("not_null", False)
+                c_unique = col.get("unique", False)
+                c_default = col.get("default")
+
+                if is_sqlite:
+                    # SQLite autoincrement syntax
+                    c_pk_str = " PRIMARY KEY" if c_pk else ""
+                    c_auto_str = " AUTOINCREMENT" if c_auto and c_pk and c_type in ["INTEGER", "INT"] else ""
+                    c_nn_str = " NOT NULL" if c_nn and not c_pk else ""
+                    c_unique_str = " UNIQUE" if c_unique else ""
+                    c_default_str = f" DEFAULT '{c_default}'" if c_default is not None and c_default != "" else ""
+                    col_defs.append(f"  {c_name} {c_type}{c_pk_str}{c_auto_str}{c_nn_str}{c_unique_str}{c_default_str}")
+                else:
+                    # PostgreSQL syntax: SERIAL for auto-increment PKs
+                    if c_pk and (c_auto or c_type in ["SERIAL", "BIGSERIAL"]):
+                        if c_type in ["BIGINT", "BIGSERIAL"]:
+                            col_defs.append(f"  {c_name} BIGSERIAL PRIMARY KEY")
+                        else:
+                            col_defs.append(f"  {c_name} SERIAL PRIMARY KEY")
+                    else:
+                        c_pk_str = " PRIMARY KEY" if c_pk else ""
+                        c_nn_str = " NOT NULL" if c_nn and not c_pk else ""
+                        c_unique_str = " UNIQUE" if c_unique else ""
+                        c_default_str = f" DEFAULT '{c_default}'" if c_default is not None and c_default != "" else ""
+                        col_defs.append(f"  {c_name} {c_type}{c_pk_str}{c_nn_str}{c_unique_str}{c_default_str}")
 
             sql = f"CREATE TABLE {table_name} (\n" + ",\n".join(col_defs) + "\n);"
             return sql
 
         elif request_type == RequestType.ALTER_TABLE:
             table_name = details.get("table_name", "").strip()
-            action = details.get("action", "ADD_COLUMN") # ADD_COLUMN, RENAME_TABLE
+            action = details.get("action", "ADD_COLUMN") # ADD_COLUMN, RENAME_TABLE, DROP_COLUMN, RENAME_COLUMN, ALTER_TYPE
             if not table_name:
                 raise ValueError("Table name is required for ALTER_TABLE.")
 
@@ -51,6 +74,26 @@ class SQLGenerator:
                     raise ValueError("New table name is required for RENAME_TABLE.")
                 return f"ALTER TABLE {table_name} RENAME TO {new_name};"
 
+            elif action == "DROP_COLUMN":
+                c_name = details.get("column_name", "").strip()
+                if not c_name:
+                    raise ValueError("Column name is required for DROP_COLUMN.")
+                return f"ALTER TABLE {table_name} DROP COLUMN {c_name};"
+
+            elif action == "RENAME_COLUMN":
+                old_name = details.get("old_column_name", "").strip()
+                new_name = details.get("new_column_name", "").strip()
+                if not old_name or not new_name:
+                    raise ValueError("Old and new column names are required for RENAME_COLUMN.")
+                return f"ALTER TABLE {table_name} RENAME COLUMN {old_name} TO {new_name};"
+
+            elif action == "ALTER_TYPE":
+                c_name = details.get("column_name", "").strip()
+                new_type = details.get("new_type", "TEXT").upper().strip()
+                if not c_name:
+                    raise ValueError("Column name is required for ALTER_TYPE.")
+                return f"ALTER TABLE {table_name} ALTER COLUMN {c_name} TYPE {new_type};"
+
             else:
                 raise ValueError(f"Unsupported alter table action: {action}")
 
@@ -58,7 +101,10 @@ class SQLGenerator:
             table_name = details.get("table_name", "").strip()
             if not table_name:
                 raise ValueError("Table name is required for DROP_TABLE.")
-            return f"DROP TABLE IF EXISTS {table_name};"
+            if target_engine.dialect.name == "sqlite":
+                return f"DROP TABLE IF EXISTS {table_name};"
+            else:
+                return f"DROP TABLE IF EXISTS {table_name} CASCADE;"
 
         elif request_type == RequestType.GRANT_ACCESS:
             username = details.get("username", "").strip()
@@ -67,8 +113,23 @@ class SQLGenerator:
             if not username or not target_object:
                 raise ValueError("Username and Target Object are required for GRANT_ACCESS.")
 
-            # Simulated RBAC recorded into target database metadata table
-            return f"INSERT INTO _dba_user_permissions (username, target_object, permission_level) VALUES ('{username}', '{target_object}', '{permission}');"
+            if permission == "READ":
+                privs = "SELECT"
+            elif permission == "WRITE":
+                privs = "SELECT, INSERT, UPDATE, DELETE"
+            elif permission == "ADMIN":
+                privs = "ALL PRIVILEGES"
+            else:
+                privs = permission
+
+            if target_object == "*" or target_object.upper() == "ALL TABLES":
+                grant_stmt = f"GRANT {privs} ON ALL TABLES IN SCHEMA public TO {username};"
+            else:
+                grant_stmt = f"GRANT {privs} ON TABLE {target_object} TO {username};"
+
+            audit_stmt = f"INSERT INTO _dba_user_permissions (username, target_object, permission_level) VALUES ('{username}', '{target_object}', '{permission}');"
+
+            return f"{grant_stmt}\n{audit_stmt}"
 
         elif request_type == RequestType.CUSTOM_SQL:
             sql_query = details.get("sql_query", "").strip()
@@ -104,7 +165,14 @@ class AutomationEngine:
 
             with target_engine.connect() as conn:
                 for stmt in statements:
-                    conn.exec_driver_sql(stmt)
+                    try:
+                        conn.exec_driver_sql(stmt)
+                    except Exception as e:
+                        # SQLite driver fallback for GRANT DCL statement during local mock testing
+                        if stmt.upper().startswith("GRANT") and target_engine.dialect.name == "sqlite":
+                            pass
+                        else:
+                            raise e
                 conn.commit()
 
             # Record successful execution

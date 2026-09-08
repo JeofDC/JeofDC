@@ -1,5 +1,6 @@
 import enum
 import datetime
+import os
 import json
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Enum, JSON, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
@@ -61,27 +62,45 @@ class ExecutionLog(Base):
     request = relationship("DBARequest", back_populates="execution_logs")
 
 # Engine and session creation
-APP_DB_URL = "sqlite:///./app_meta.db"
-TARGET_DB_URL = "sqlite:///./target_managed.db"
+APP_DB_URL = os.getenv("APP_DB_URL", "sqlite:///./app_meta.db")
+TARGET_DB_URL = os.getenv("TARGET_DB_URL", os.getenv("POSTGRES_URL", "sqlite:///./target_managed.db"))
 
-app_engine = create_engine(APP_DB_URL, connect_args={"check_same_thread": False})
+if APP_DB_URL.startswith("sqlite"):
+    app_engine = create_engine(APP_DB_URL, connect_args={"check_same_thread": False})
+else:
+    app_engine = create_engine(APP_DB_URL)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=app_engine)
 
-target_engine = create_engine(TARGET_DB_URL, connect_args={"check_same_thread": False})
+if TARGET_DB_URL.startswith("sqlite"):
+    target_engine = create_engine(TARGET_DB_URL, connect_args={"check_same_thread": False})
+else:
+    target_engine = create_engine(TARGET_DB_URL)
 
 def init_db():
     Base.metadata.create_all(bind=app_engine)
     # Ensure target DB has user_permissions table for RBAC/access grants simulation
     with target_engine.connect() as conn:
-        conn.exec_driver_sql("""
-            CREATE TABLE IF NOT EXISTS _dba_user_permissions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                target_object TEXT NOT NULL,
-                permission_level TEXT NOT NULL,
-                granted_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if target_engine.dialect.name == "postgresql":
+            conn.exec_driver_sql("""
+                CREATE TABLE IF NOT EXISTS _dba_user_permissions (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(100) NOT NULL,
+                    target_object VARCHAR(200) NOT NULL,
+                    permission_level VARCHAR(50) NOT NULL,
+                    granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        else:
+            conn.exec_driver_sql("""
+                CREATE TABLE IF NOT EXISTS _dba_user_permissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    target_object TEXT NOT NULL,
+                    permission_level TEXT NOT NULL,
+                    granted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         conn.commit()
 
 def get_db():
