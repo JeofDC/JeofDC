@@ -85,11 +85,11 @@
             <!-- Active Database Status Widget -->
             <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 shadow-sm text-xs space-y-2">
                 <div class="flex items-center justify-between text-slate-400">
-                    <span>Target Database</span>
+                    <span>Target Database (PostgreSQL)</span>
                     <span class="inline-flex items-center text-emerald-400 font-semibold"><span class="h-2 w-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span> Connected</span>
                 </div>
-                <div class="text-slate-200 font-mono text-xs truncate bg-slate-900 p-2 rounded border border-slate-700">
-                    sqlite:///./target_managed.db
+                <div id="target-db-url-display" class="text-slate-200 font-mono text-xs truncate bg-slate-900 p-2 rounded border border-slate-700">
+                    postgresql://target_db_managed
                 </div>
                 <div class="flex justify-between pt-1 text-slate-400">
                     <span>Tables Active: <strong id="widget-table-count" class="text-white">0</strong></span>
@@ -183,6 +183,9 @@
                                 <select id="alter-action-select" onchange="toggleAlterFields(); generateLiveSQLPreview();" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
                                     <option value="ADD_COLUMN">Add New Column</option>
                                     <option value="RENAME_TABLE">Rename Table</option>
+                                    <option value="DROP_COLUMN">Drop Column</option>
+                                    <option value="RENAME_COLUMN">Rename Column</option>
+                                    <option value="ALTER_TYPE">Change Column Type</option>
                                 </select>
                             </div>
                         </div>
@@ -195,11 +198,14 @@
                             <div>
                                 <label class="block text-xs font-medium text-slate-400 mb-1">Data Type</label>
                                 <select id="alter-col-type" onchange="generateLiveSQLPreview()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm">
+                                    <option value="VARCHAR(255)">VARCHAR(255)</option>
                                     <option value="TEXT">TEXT</option>
                                     <option value="INTEGER">INTEGER</option>
-                                    <option value="REAL">REAL</option>
-                                    <option value="VARCHAR(255)">VARCHAR(255)</option>
-                                    <option value="DATETIME">DATETIME</option>
+                                    <option value="BIGINT">BIGINT</option>
+                                    <option value="TIMESTAMP">TIMESTAMP</option>
+                                    <option value="BOOLEAN">BOOLEAN</option>
+                                    <option value="NUMERIC">NUMERIC</option>
+                                    <option value="JSONB">JSONB</option>
                                 </select>
                             </div>
                             <div>
@@ -211,6 +217,42 @@
                         <div id="alter-rename-group" class="hidden">
                             <label class="block text-xs font-medium text-slate-400 mb-1">New Table Name</label>
                             <input type="text" id="alter-new-table-name" oninput="generateLiveSQLPreview()" placeholder="e.g. archived_orders" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                        </div>
+
+                        <div id="alter-drop-col-group" class="hidden">
+                            <label class="block text-xs font-medium text-slate-400 mb-1">Column To Drop</label>
+                            <input type="text" id="alter-drop-col-name" oninput="generateLiveSQLPreview()" placeholder="e.g. deprecated_field" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                        </div>
+
+                        <div id="alter-rename-col-group" class="hidden grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Old Column Name</label>
+                                <input type="text" id="alter-old-col-name" oninput="generateLiveSQLPreview()" placeholder="e.g. old_name" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">New Column Name</label>
+                                <input type="text" id="alter-new-col-name" oninput="generateLiveSQLPreview()" placeholder="e.g. new_name" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                            </div>
+                        </div>
+
+                        <div id="alter-type-group" class="hidden grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">Target Column Name</label>
+                                <input type="text" id="alter-type-col-name" oninput="generateLiveSQLPreview()" placeholder="e.g. price" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-400 mb-1">New PostgreSQL Data Type</label>
+                                <select id="alter-type-new-type" onchange="generateLiveSQLPreview()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                                    <option value="NUMERIC">NUMERIC</option>
+                                    <option value="TEXT">TEXT</option>
+                                    <option value="VARCHAR(255)">VARCHAR(255)</option>
+                                    <option value="INTEGER">INTEGER</option>
+                                    <option value="BIGINT">BIGINT</option>
+                                    <option value="TIMESTAMP">TIMESTAMP</option>
+                                    <option value="BOOLEAN">BOOLEAN</option>
+                                    <option value="JSONB">JSONB</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
 

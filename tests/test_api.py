@@ -96,3 +96,20 @@ def test_api_cancellation_flow():
     cancel_resp = client.post(f"/api/requests/{req_id}/cancel")
     assert cancel_resp.status_code == 200
     assert cancel_resp.json()["status"] == "CANCELLED"
+
+def test_api_postgres_sql_previews():
+    # Grant Access preview
+    grant_preview = client.post("/api/preview-sql", json={
+        "request_type": "GRANT_ACCESS",
+        "details": {"username": "pg_dev", "target_object": "orders", "permission": "READ"}
+    })
+    assert grant_preview.status_code == 200
+    assert "GRANT SELECT ON TABLE orders TO pg_dev;" in grant_preview.json()["sql"]
+
+    # Alter Table drop column preview
+    alter_preview = client.post("/api/preview-sql", json={
+        "request_type": "ALTER_TABLE",
+        "details": {"table_name": "orders", "action": "DROP_COLUMN", "column_name": "temp_col"}
+    })
+    assert alter_preview.status_code == 200
+    assert alter_preview.json()["sql"] == "ALTER TABLE orders DROP COLUMN temp_col;"

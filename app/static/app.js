@@ -75,13 +75,24 @@ function onReqTypeChange() {
 
 function toggleAlterFields() {
     const action = document.getElementById('alter-action-select').value;
-    if (action === 'ADD_COLUMN') {
-        document.getElementById('alter-add-col-group').classList.remove('hidden');
-        document.getElementById('alter-rename-group').classList.add('hidden');
-    } else {
-        document.getElementById('alter-add-col-group').classList.add('hidden');
-        document.getElementById('alter-rename-group').classList.remove('hidden');
-    }
+    const groups = {
+        'ADD_COLUMN': 'alter-add-col-group',
+        'RENAME_TABLE': 'alter-rename-group',
+        'DROP_COLUMN': 'alter-drop-col-group',
+        'RENAME_COLUMN': 'alter-rename-col-group',
+        'ALTER_TYPE': 'alter-type-group'
+    };
+
+    Object.keys(groups).forEach(act => {
+        const el = document.getElementById(groups[act]);
+        if (el) {
+            if (act === action) {
+                el.classList.remove('hidden');
+            } else {
+                el.classList.add('hidden');
+            }
+        }
+    });
 }
 
 function addColumnRow() {
@@ -98,12 +109,16 @@ function addColumnRow() {
         </div>
         <div class="col-span-3">
             <select onchange="generateLiveSQLPreview()" class="col-type w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100">
+                <option value="SERIAL">SERIAL</option>
+                <option value="VARCHAR(255)">VARCHAR(255)</option>
                 <option value="TEXT">TEXT</option>
                 <option value="INTEGER">INTEGER</option>
-                <option value="REAL">REAL</option>
-                <option value="VARCHAR(255)">VARCHAR(255)</option>
-                <option value="DATETIME">DATETIME</option>
+                <option value="BIGINT">BIGINT</option>
+                <option value="TIMESTAMP">TIMESTAMP</option>
                 <option value="BOOLEAN">BOOLEAN</option>
+                <option value="NUMERIC">NUMERIC</option>
+                <option value="JSONB">JSONB</option>
+                <option value="REAL">REAL</option>
             </select>
         </div>
         <div class="col-span-2 flex items-center space-x-1 text-slate-300 text-xs">
@@ -176,9 +191,20 @@ function extractFormDetails() {
                 action: 'ADD_COLUMN',
                 column: { name: colName, type: colType, default: colDef || null }
             };
-        } else {
+        } else if (action === 'RENAME_TABLE') {
             const newName = document.getElementById('alter-new-table-name').value.trim();
             details = { table_name, action: 'RENAME_TABLE', new_table_name: newName };
+        } else if (action === 'DROP_COLUMN') {
+            const colName = document.getElementById('alter-drop-col-name').value.trim();
+            details = { table_name, action: 'DROP_COLUMN', column_name: colName };
+        } else if (action === 'RENAME_COLUMN') {
+            const oldName = document.getElementById('alter-old-col-name').value.trim();
+            const newName = document.getElementById('alter-new-col-name').value.trim();
+            details = { table_name, action: 'RENAME_COLUMN', old_column_name: oldName, new_column_name: newName };
+        } else if (action === 'ALTER_TYPE') {
+            const colName = document.getElementById('alter-type-col-name').value.trim();
+            const newType = document.getElementById('alter-type-new-type').value;
+            details = { table_name, action: 'ALTER_TYPE', column_name: colName, new_type: newType };
         }
 
     } else if (reqType === 'DROP_TABLE') {
@@ -544,6 +570,14 @@ async function loadSchemaBrowser() {
         const resp = await fetch('/api/schema');
         const schema = await resp.json();
         currentSchema = schema;
+
+        // Update target DB display if available
+        if (schema.target_db_dialect) {
+            const dbDisplay = document.getElementById('target-db-url-display');
+            if (dbDisplay) {
+                dbDisplay.textContent = `PostgreSQL (${schema.target_db_dialect})`;
+            }
+        }
 
         // Update widget stats
         document.getElementById('widget-table-count').textContent = schema.tables.length;

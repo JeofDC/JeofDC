@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.models import (
-    init_db, get_db, DBARequest, ExecutionLog, RequestType, RequestStatus
+    init_db, get_db, target_engine, DBARequest, ExecutionLog, RequestType, RequestStatus
 )
 from app.engine import SQLGenerator, AutomationEngine, SchemaInspector
 
@@ -188,4 +188,6 @@ def cancel_request(request_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/schema")
 def get_schema():
-    return SchemaInspector.get_full_schema()
+    schema_data = SchemaInspector.get_full_schema()
+    schema_data["target_db_dialect"] = target_engine.dialect.name
+    return schema_data
