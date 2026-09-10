@@ -631,13 +631,140 @@ async function loadSchemaBrowser() {
 function populateTableDropdowns(tables) {
     const alterSelect = document.getElementById('alter-table-select');
     const dropSelect = document.getElementById('drop-table-select');
+    const exportSelect = document.getElementById('export-table-select');
 
-    if (alterSelect) {
-        alterSelect.innerHTML = tables.map(t => `<option value="${escapeHtml(t.table_name)}">${escapeHtml(t.table_name)}</option>`).join('') || '<option value="">(No tables available)</option>';
+    const optionsHtml = tables.map(t => `<option value="${escapeHtml(t.table_name)}">${escapeHtml(t.table_name)}</option>`).join('') || '<option value="">(No tables available)</option>';
+
+    if (alterSelect) alterSelect.innerHTML = optionsHtml;
+    if (dropSelect) dropSelect.innerHTML = optionsHtml;
+    if (exportSelect) exportSelect.innerHTML = optionsHtml;
+}
+
+// XLSX Import/Export UI Logic
+async function handleXlsxFileSelect() {
+    const fileInput = document.getElementById('xlsx-file-input');
+    if (!fileInput.files || fileInput.files.length === 0) return;
+
+    const file = fileInput.files[0];
+    // Auto-fill table name if empty
+    const tableNameInput = document.getElementById('xlsx-table-name');
+    if (!tableNameInput.value) {
+        const cleanName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
+        tableNameInput.value = cleanName;
     }
-    if (dropSelect) {
-        dropSelect.innerHTML = tables.map(t => `<option value="${escapeHtml(t.table_name)}">${escapeHtml(t.table_name)}</option>`).join('') || '<option value="">(No tables available)</option>';
+
+    await previewSelectedSheet();
+}
+
+async function previewSelectedSheet() {
+    const fileInput = document.getElementById('xlsx-file-input');
+    if (!fileInput.files || fileInput.files.length === 0) return;
+
+    const file = fileInput.files[0];
+    const sheetSelect = document.getElementById('xlsx-sheet-select');
+    const selectedSheet = sheetSelect.value || null;
+
+    const formData = new FormData();
+    formData.append('file', file);
+    if (selectedSheet) formData.append('sheet_name', selectedSheet);
+
+    try {
+        const resp = await fetch('/api/xlsx/preview', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json();
+            alert('Preview error: ' + (err.detail || 'Failed to preview file'));
+            return;
+        }
+
+        const data = await resp.json();
+
+        // Handle sheet select dropdown options
+        const sheetGroup = document.getElementById('xlsx-sheet-select-group');
+        if (data.sheet_names && data.sheet_names.length > 1) {
+            sheetGroup.classList.remove('hidden');
+            sheetSelect.innerHTML = data.sheet_names.map(s => `<option value="${escapeHtml(s)}" ${s === data.selected_sheet ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('');
+        } else {
+            sheetGroup.classList.add('hidden');
+        }
+
+        // Render preview table
+        const previewContainer = document.getElementById('xlsx-preview-container');
+        previewContainer.classList.remove('hidden');
+        document.getElementById('xlsx-row-count').textContent = `Total rows: ${data.total_rows}`;
+
+        const thead = document.getElementById('xlsx-preview-thead');
+        const tbody = document.getElementById('xlsx-preview-tbody');
+
+        thead.innerHTML = `<tr>${data.columns.map(col => `<th class="p-1.5 font-mono">${escapeHtml(col)}</th>`).join('')}</tr>`;
+        tbody.innerHTML = data.preview_rows.map(row => `
+            <tr>${data.columns.map(col => `<td class="p-1.5 font-mono text-[10px] text-slate-300">${escapeHtml(String(row[col] ?? ''))}</td>`).join('')}</tr>
+        `).join('');
+
+    } catch (err) {
+        console.error('Error previewing XLSX file:', err);
     }
+}
+
+async function handleXlsxImport(e) {
+    e.preventDefault();
+    const fileInput = document.getElementById('xlsx-file-input');
+    const tableName = document.getElementById('xlsx-table-name').value.trim();
+    const ifExists = document.getElementById('xlsx-if-exists').value;
+    const sheetSelect = document.getElementById('xlsx-sheet-select');
+    const selectedSheet = sheetSelect.value || null;
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+        alert('Please select an Excel file to import.');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('table_name', tableName);
+    formData.append('if_exists', ifExists);
+    if (selectedSheet) formData.append('sheet_name', selectedSheet);
+
+    const btn = document.getElementById('xlsx-import-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Importing...';
+
+    try {
+        const resp = await fetch('/api/xlsx/import', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await resp.json();
+        if (resp.ok) {
+            alert(`Successfully imported ${data.rows_imported} rows into table '${data.table_name}'!`);
+            fileInput.value = '';
+            document.getElementById('xlsx-table-name').value = '';
+            document.getElementById('xlsx-preview-container').classList.add('hidden');
+            loadSchemaBrowser();
+        } else {
+            alert('Import error: ' + (data.detail || 'Failed to import XLSX file'));
+        }
+    } catch (err) {
+        alert('Network error during XLSX import.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-upload mr-2"></i> Import Excel Data to Database';
+    }
+}
+
+async function handleXlsxExport() {
+    const tableSelect = document.getElementById('export-table-select');
+    const tableName = tableSelect.value;
+    if (!tableName) {
+        alert('Please select a table to export.');
+        return;
+    }
+
+    window.location.href = `/api/xlsx/export/${encodeURIComponent(tableName)}`;
 }
 
 function getStatusBadge(status) {
