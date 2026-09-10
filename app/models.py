@@ -60,6 +60,17 @@ class ExecutionLog(Base):
 
     request = relationship("DBARequest", back_populates="execution_logs")
 
+# Global connection configuration state
+db_config = {
+    "db_type": "postgresql",
+    "server": "localhost",
+    "port": "5432",
+    "dbname": "postgres",
+    "user": "postgres",
+    "password": "",
+    "schema": "public"
+}
+
 # Engine and session creation
 APP_DB_URL = "sqlite:///./app_meta.db"
 TARGET_DB_URL = "sqlite:///./target_managed.db"
@@ -69,20 +80,59 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=app_engine)
 
 target_engine = create_engine(TARGET_DB_URL, connect_args={"check_same_thread": False})
 
+def build_connection_url(config: dict) -> str:
+    db_type = config.get("db_type", "sqlite")
+    if db_type == "postgresql":
+        user = config.get("user", "postgres")
+        password = config.get("password", "")
+        server = config.get("server", "localhost")
+        port = config.get("port", "5432")
+        dbname = config.get("dbname", "postgres")
+        auth = f"{user}:{password}@" if password else f"{user}@"
+        return f"postgresql://{auth}{server}:{port}/{dbname}"
+    elif db_type == "sqlite":
+        return TARGET_DB_URL
+    return TARGET_DB_URL
+
+def set_target_engine(config: dict):
+    global target_engine, db_config
+    db_config.update(config)
+    url = build_connection_url(db_config)
+    if "sqlite" in url:
+        new_engine = create_engine(url, connect_args={"check_same_thread": False})
+    else:
+        new_engine = create_engine(url)
+    target_engine = new_engine
+    return new_engine
+
 def init_db():
     Base.metadata.create_all(bind=app_engine)
     # Ensure target DB has user_permissions table for RBAC/access grants simulation
-    with target_engine.connect() as conn:
-        conn.exec_driver_sql("""
-            CREATE TABLE IF NOT EXISTS _dba_user_permissions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                target_object TEXT NOT NULL,
-                permission_level TEXT NOT NULL,
-                granted_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
+    try:
+        with target_engine.connect() as conn:
+            if "sqlite" in str(target_engine.url):
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS _dba_user_permissions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT NOT NULL,
+                        target_object TEXT NOT NULL,
+                        permission_level TEXT NOT NULL,
+                        granted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+            else:
+                conn.exec_driver_sql("""
+                    CREATE TABLE IF NOT EXISTS _dba_user_permissions (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR(100) NOT NULL,
+                        target_object VARCHAR(100) NOT NULL,
+                        permission_level VARCHAR(50) NOT NULL,
+                        granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+            conn.commit()
+    except Exception:
+        pass
 
 def get_db():
     db = SessionLocal()

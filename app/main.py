@@ -9,8 +9,10 @@ from fastapi.requests import Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from sqlalchemy import create_engine, text
 from app.models import (
-    init_db, get_db, DBARequest, ExecutionLog, RequestType, RequestStatus
+    init_db, get_db, DBARequest, ExecutionLog, RequestType, RequestStatus,
+    db_config, set_target_engine, build_connection_url, target_engine
 )
 from app.engine import SQLGenerator, AutomationEngine, SchemaInspector
 from app.exporter import XLSXHandler
@@ -192,43 +194,138 @@ def cancel_request(request_id: int, db: Session = Depends(get_db)):
 def get_schema():
     return SchemaInspector.get_full_schema()
 
-# XLSX Import/Export API Endpoints
-@app.post("/api/xlsx/preview")
-async def preview_xlsx_endpoint(file: UploadFile = File(...), sheet_name: Optional[str] = Form(None)):
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Uploaded file must be an Excel spreadsheet (.xlsx or .xls)")
+# Database Connection Configuration & Folder Scanner Endpoints
+class DBConfigInput(BaseModel):
+    db_type: str = "postgresql" # postgresql or sqlite
+    server: str = "localhost"
+    port: str = "5432"
+    dbname: str = "postgres"
+    user: str = "postgres"
+    password: Optional[str] = ""
+    db_schema: Optional[str] = Field("public", alias="schema")
+
+class FolderScanInput(BaseModel):
+    folder_path: str
+
+@app.get("/api/db-config")
+def get_db_config():
+    # Mask password for security
+    conf = dict(db_config)
+    conf["password"] = "******" if conf.get("password") else ""
+    conf["active_target_url"] = str(target_engine.url)
+    return conf
+
+@app.post("/api/db-config")
+def update_db_config(data: DBConfigInput):
     try:
-        content = await file.read()
-        result = XLSXHandler.preview_xlsx(content, sheet_name=sheet_name)
+        new_conf = data.model_dump(by_alias=True)
+        url = build_connection_url(new_conf)
+
+        # Test connection
+        if "sqlite" in url:
+            test_eng = create_engine(url, connect_args={"check_same_thread": False})
+        else:
+            test_eng = create_engine(url)
+
+        with test_eng.connect() as conn:
+            conn.execute(text("SELECT 1"))
+
+        # Connection successful, set active target engine
+        set_target_engine(new_conf)
+        init_db()
+
+        return {"success": True, "message": "Database connection updated successfully!", "target_url": str(target_engine.url)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Database connection failed: {str(e)}")
+
+@app.post("/api/folder/scan")
+def scan_folder(data: FolderScanInput):
+    folder_path = data.folder_path.strip()
+    if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
+        raise HTTPException(status_code=404, detail=f"Folder path '{folder_path}' does not exist or is not a directory.")
+
+    files = []
+    for f in os.listdir(folder_path):
+        if f.lower().endswith(('.xlsx', '.xls', '.csv')):
+            full_p = os.path.join(folder_path, f)
+            size_bytes = os.path.getsize(full_p)
+            files.append({
+                "filename": f,
+                "filepath": full_p,
+                "size_kb": round(size_bytes / 1024, 2),
+                "type": "CSV" if f.lower().endswith('.csv') else "Excel"
+            })
+
+    return {"folder_path": folder_path, "files": sorted(files, key=lambda x: x["filename"])}
+
+# XLSX & CSV Import/Export API Endpoints
+@app.post("/api/xlsx/preview")
+async def preview_xlsx_endpoint(
+    file: Optional[UploadFile] = File(None),
+    filepath: Optional[str] = Form(None),
+    sheet_name: Optional[str] = Form(None)
+):
+    try:
+        if file and file.filename:
+            filename = file.filename
+            content = await file.read()
+        elif filepath:
+            if not os.path.exists(filepath):
+                raise HTTPException(status_code=404, detail="File path not found.")
+            filename = os.path.basename(filepath)
+            with open(filepath, "rb") as f:
+                content = f.read()
+        else:
+            raise HTTPException(status_code=400, detail="Either a file upload or file path must be provided.")
+
+        if not filename.lower().endswith(('.xlsx', '.xls', '.csv')):
+            raise HTTPException(status_code=400, detail="File must be an Excel spreadsheet (.xlsx, .xls) or CSV file (.csv)")
+
+        result = XLSXHandler.preview_xlsx(content, filename=filename, sheet_name=sheet_name)
         return result
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to preview Excel file: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to preview file: {str(e)}")
 
 @app.post("/api/xlsx/import")
 async def import_xlsx_endpoint(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    filepath: Optional[str] = Form(None),
     table_name: str = Form(...),
     if_exists: str = Form("append"),
     sheet_name: Optional[str] = Form(None)
 ):
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Uploaded file must be an Excel spreadsheet (.xlsx or .xls)")
     if not table_name.strip():
         raise HTTPException(status_code=400, detail="Target table name is required.")
     if if_exists not in ["append", "replace", "fail"]:
         raise HTTPException(status_code=400, detail="if_exists must be one of: append, replace, fail")
 
     try:
-        content = await file.read()
+        if file and file.filename:
+            filename = file.filename
+            content = await file.read()
+        elif filepath:
+            if not os.path.exists(filepath):
+                raise HTTPException(status_code=404, detail="File path not found.")
+            filename = os.path.basename(filepath)
+            with open(filepath, "rb") as f:
+                content = f.read()
+        else:
+            raise HTTPException(status_code=400, detail="Either a file upload or file path must be provided.")
+
+        if not filename.lower().endswith(('.xlsx', '.xls', '.csv')):
+            raise HTTPException(status_code=400, detail="File must be an Excel spreadsheet (.xlsx, .xls) or CSV file (.csv)")
+
         res = XLSXHandler.export_xlsx_to_db(
             file_content=content,
             table_name=table_name.strip(),
+            filename=filename,
             if_exists=if_exists,
-            sheet_name=sheet_name
+            sheet_name=sheet_name,
+            schema=db_config.get("schema")
         )
         return res
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to import XLSX into database table: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to import file into database table: {str(e)}")
 
 @app.get("/api/xlsx/export/{table_name}")
 def export_xlsx_endpoint(table_name: str):

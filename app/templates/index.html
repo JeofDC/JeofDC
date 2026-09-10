@@ -82,6 +82,10 @@
                             <i class="fa-solid fa-database text-purple-400"></i>
                             <span>Target DB Schema</span>
                         </button>
+                        <button onclick="setActiveTab('db-config')" id="nav-dba-config" class="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700">
+                            <i class="fa-solid fa-gears text-amber-400"></i>
+                            <span>Database Connection Settings</span>
+                        </button>
                     </nav>
                 </div>
             </div>
@@ -380,16 +384,44 @@
                 </div>
 
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <!-- Import XLSX to Database Section -->
+                    <!-- Import XLSX / CSV to Database Section -->
                     <div class="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-4">
-                        <h3 class="text-sm font-semibold text-emerald-400 flex items-center">
-                            <i class="fa-solid fa-file-import mr-2"></i> Import XLSX into Target Database
+                        <h3 class="text-sm font-semibold text-emerald-400 flex items-center justify-between">
+                            <span><i class="fa-solid fa-file-import mr-2"></i> Import Excel / CSV into Database</span>
                         </h3>
 
+                        <!-- Source Mode Switcher -->
+                        <div class="flex space-x-2 bg-slate-950 p-1 rounded-lg text-xs font-semibold">
+                            <button type="button" id="source-file-btn" onclick="switchSourceMode('FILE')" class="flex-1 py-1.5 rounded-md bg-emerald-600 text-white">
+                                <i class="fa-solid fa-upload mr-1"></i> Upload File
+                            </button>
+                            <button type="button" id="source-folder-btn" onclick="switchSourceMode('FOLDER')" class="flex-1 py-1.5 rounded-md text-slate-400 hover:text-white">
+                                <i class="fa-solid fa-folder-open mr-1"></i> Server Folder Source
+                            </button>
+                        </div>
+
                         <form id="xlsx-import-form" onsubmit="handleXlsxImport(event)" class="space-y-4">
-                            <div>
-                                <label class="block text-xs font-semibold text-slate-300 mb-1">Select Excel File (.xlsx)</label>
-                                <input type="file" id="xlsx-file-input" accept=".xlsx, .xls" onchange="handleXlsxFileSelect()" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500">
+                            <!-- Direct File Upload Source -->
+                            <div id="source-file-group">
+                                <label class="block text-xs font-semibold text-slate-300 mb-1">Select Excel / CSV File (.xlsx, .xls, .csv)</label>
+                                <input type="file" id="xlsx-file-input" accept=".xlsx, .xls, .csv" onchange="handleXlsxFileSelect()" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500">
+                            </div>
+
+                            <!-- Server Folder Source -->
+                            <div id="source-folder-group" class="hidden space-y-2">
+                                <label class="block text-xs font-semibold text-slate-300">Server Folder Path Source</label>
+                                <div class="flex space-x-2">
+                                    <input type="text" id="folder-path-input" placeholder="e.g. /home/user/data_files or ./data" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100">
+                                    <button type="button" onclick="scanFolderFiles()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0">
+                                        Scan
+                                    </button>
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-slate-400 mb-1">Select File From Folder</label>
+                                    <select id="folder-file-select" onchange="handleFolderFileSelect()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100">
+                                        <option value="">(Scan folder to list files)</option>
+                                    </select>
+                                </div>
                             </div>
 
                             <div class="grid grid-cols-2 gap-3">
@@ -455,6 +487,69 @@
                         <button type="button" onclick="handleXlsxExport()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs py-2 px-4 rounded-lg transition shadow-md flex items-center justify-center mt-6">
                             <i class="fa-solid fa-file-arrow-down mr-2"></i> Export & Download XLSX
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 7: Database Connection Configuration (DB Admin Mode) -->
+            <div id="tab-db-config" class="tab-content hidden bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-sm">
+                <div class="border-b border-slate-700 pb-4 mb-6">
+                    <h2 class="text-lg font-bold text-white flex items-center">
+                        <i class="fa-solid fa-gears text-amber-400 mr-2"></i> Database Connection Settings
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1">Configure target PostgreSQL database connection parameters (server, dbname, user, password, port, schema).</p>
+                </div>
+
+                <div class="max-w-2xl bg-slate-900 border border-slate-700 rounded-xl p-6 space-y-5">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-300 mb-1">Database Type</label>
+                            <select id="cfg-db-type" onchange="toggleDbConfigFields()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100">
+                                <option value="postgresql">PostgreSQL Engine</option>
+                                <option value="sqlite">SQLite Engine (Local target_managed.db)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-300 mb-1">Target Schema</label>
+                            <input type="text" id="cfg-schema" value="public" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100">
+                        </div>
+                    </div>
+
+                    <div id="pg-fields-group" class="space-y-4">
+                        <div class="grid grid-cols-3 gap-4">
+                            <div class="col-span-2">
+                                <label class="block text-xs font-semibold text-slate-300 mb-1">Database Server / Host</label>
+                                <input type="text" id="cfg-server" placeholder="localhost or postgres.example.com" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-300 mb-1">Port</label>
+                                <input type="text" id="cfg-port" value="5432" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-300 mb-1">Database Name</label>
+                                <input type="text" id="cfg-dbname" placeholder="postgres" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-300 mb-1">Username</label>
+                                <input type="text" id="cfg-user" placeholder="postgres" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-300 mb-1">Password</label>
+                                <input type="password" id="cfg-password" placeholder="••••••••" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-3 border-t border-slate-800 flex justify-between items-center">
+                        <span id="cfg-status-msg" class="text-xs font-mono text-slate-400"></span>
+                        <div class="flex space-x-3">
+                            <button type="button" onclick="saveDatabaseConfig()" class="bg-amber-600 hover:bg-amber-500 text-white px-5 py-2 rounded-lg text-xs font-bold transition shadow-md">
+                                <i class="fa-solid fa-plug mr-1.5"></i> Test & Save Connection
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

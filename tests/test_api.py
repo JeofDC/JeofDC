@@ -150,3 +150,42 @@ def test_api_xlsx_export():
     assert export_resp.status_code == 200
     assert export_resp.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     assert len(export_resp.content) > 0
+
+def test_api_db_config():
+    # Test GET db-config
+    get_resp = client.get("/api/db-config")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["db_type"] in ["postgresql", "sqlite"]
+
+    # Test POST db-config (switch to SQLite for local test environment)
+    post_resp = client.post("/api/db-config", json={
+        "db_type": "sqlite",
+        "server": "",
+        "port": "",
+        "dbname": "",
+        "user": "",
+        "password": "",
+        "schema": "main"
+    })
+    assert post_resp.status_code == 200
+    assert post_resp.json()["success"] is True
+
+def test_api_folder_scan_and_filepath_import(tmp_path):
+    # Create sample CSV file in temp directory
+    test_csv = tmp_path / "sample_data.csv"
+    test_csv.write_text("id,name\n1,Alpha\n2,Beta")
+
+    # Test scan endpoint
+    scan_resp = client.post("/api/folder/scan", json={"folder_path": str(tmp_path)})
+    assert scan_resp.status_code == 200
+    files = scan_resp.json()["files"]
+    assert len(files) == 1
+    assert files[0]["filename"] == "sample_data.csv"
+
+    # Test import using filepath
+    import_resp = client.post(
+        "/api/xlsx/import",
+        data={"filepath": str(test_csv), "table_name": "folder_csv_tbl", "if_exists": "replace"}
+    )
+    assert import_resp.status_code == 200
+    assert import_resp.json()["rows_imported"] == 2

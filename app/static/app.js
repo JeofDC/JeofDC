@@ -58,6 +58,8 @@ function setActiveTab(tabId) {
         loadDBAQueue();
     } else if (tabId === 'schema-browser') {
         loadSchemaBrowser();
+    } else if (tabId === 'db-config') {
+        loadDbConfig();
     } else if (tabId === 'new-request') {
         loadSchemaBrowser(); // to refresh table dropdowns
     }
@@ -640,32 +642,109 @@ function populateTableDropdowns(tables) {
     if (exportSelect) exportSelect.innerHTML = optionsHtml;
 }
 
-// XLSX Import/Export UI Logic
+// XLSX / CSV & Folder Source Import UI Logic
+let currentSourceMode = 'FILE'; // FILE or FOLDER
+let currentSelectedFilepath = '';
+
+function switchSourceMode(mode) {
+    currentSourceMode = mode;
+    const fileBtn = document.getElementById('source-file-btn');
+    const folderBtn = document.getElementById('source-folder-btn');
+    const fileGroup = document.getElementById('source-file-group');
+    const folderGroup = document.getElementById('source-folder-group');
+
+    if (mode === 'FILE') {
+        fileBtn.className = 'flex-1 py-1.5 rounded-md bg-emerald-600 text-white';
+        folderBtn.className = 'flex-1 py-1.5 rounded-md text-slate-400 hover:text-white';
+        fileGroup.classList.remove('hidden');
+        folderGroup.classList.add('hidden');
+    } else {
+        folderBtn.className = 'flex-1 py-1.5 rounded-md bg-emerald-600 text-white';
+        fileBtn.className = 'flex-1 py-1.5 rounded-md text-slate-400 hover:text-white';
+        folderGroup.classList.remove('hidden');
+        fileGroup.classList.add('hidden');
+    }
+    document.getElementById('xlsx-preview-container').classList.add('hidden');
+}
+
+async function scanFolderFiles() {
+    const folderPath = document.getElementById('folder-path-input').value.trim();
+    if (!folderPath) {
+        alert('Please enter a server folder path.');
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/folder/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_path: folderPath })
+        });
+
+        const data = await resp.json();
+        if (!resp.ok) {
+            alert('Scan error: ' + (data.detail || 'Failed to scan directory.'));
+            return;
+        }
+
+        const fileSelect = document.getElementById('folder-file-select');
+        if (data.files.length === 0) {
+            fileSelect.innerHTML = '<option value="">(No .xlsx, .xls or .csv files found in folder)</option>';
+            return;
+        }
+
+        fileSelect.innerHTML = '<option value="">-- Select a file from folder --</option>' +
+            data.files.map(f => `<option value="${escapeHtml(f.filepath)}" data-filename="${escapeHtml(f.filename)}">${escapeHtml(f.filename)} (${f.size_kb} KB - ${f.type})</option>`).join('');
+
+    } catch (err) {
+        alert('Network error scanning folder.');
+    }
+}
+
+async function handleFolderFileSelect() {
+    const fileSelect = document.getElementById('folder-file-select');
+    const selectedPath = fileSelect.value;
+    if (!selectedPath) return;
+
+    currentSelectedFilepath = selectedPath;
+    const selectedOpt = fileSelect.options[fileSelect.selectedIndex];
+    const fileName = selectedOpt.getAttribute('data-filename') || 'table_data';
+
+    const tableNameInput = document.getElementById('xlsx-table-name');
+    if (!tableNameInput.value) {
+        tableNameInput.value = fileName.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
+    }
+
+    await previewSelectedSheet();
+}
+
 async function handleXlsxFileSelect() {
     const fileInput = document.getElementById('xlsx-file-input');
     if (!fileInput.files || fileInput.files.length === 0) return;
 
     const file = fileInput.files[0];
-    // Auto-fill table name if empty
     const tableNameInput = document.getElementById('xlsx-table-name');
     if (!tableNameInput.value) {
-        const cleanName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
-        tableNameInput.value = cleanName;
+        tableNameInput.value = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
     }
 
     await previewSelectedSheet();
 }
 
 async function previewSelectedSheet() {
-    const fileInput = document.getElementById('xlsx-file-input');
-    if (!fileInput.files || fileInput.files.length === 0) return;
-
-    const file = fileInput.files[0];
     const sheetSelect = document.getElementById('xlsx-sheet-select');
     const selectedSheet = sheetSelect.value || null;
-
     const formData = new FormData();
-    formData.append('file', file);
+
+    if (currentSourceMode === 'FILE') {
+        const fileInput = document.getElementById('xlsx-file-input');
+        if (!fileInput.files || fileInput.files.length === 0) return;
+        formData.append('file', fileInput.files[0]);
+    } else {
+        if (!currentSelectedFilepath) return;
+        formData.append('filepath', currentSelectedFilepath);
+    }
+
     if (selectedSheet) formData.append('sheet_name', selectedSheet);
 
     try {
@@ -705,25 +784,33 @@ async function previewSelectedSheet() {
         `).join('');
 
     } catch (err) {
-        console.error('Error previewing XLSX file:', err);
+        console.error('Error previewing file:', err);
     }
 }
 
 async function handleXlsxImport(e) {
     e.preventDefault();
-    const fileInput = document.getElementById('xlsx-file-input');
     const tableName = document.getElementById('xlsx-table-name').value.trim();
     const ifExists = document.getElementById('xlsx-if-exists').value;
     const sheetSelect = document.getElementById('xlsx-sheet-select');
     const selectedSheet = sheetSelect.value || null;
 
-    if (!fileInput.files || fileInput.files.length === 0) {
-        alert('Please select an Excel file to import.');
-        return;
+    const formData = new FormData();
+    if (currentSourceMode === 'FILE') {
+        const fileInput = document.getElementById('xlsx-file-input');
+        if (!fileInput.files || fileInput.files.length === 0) {
+            alert('Please select a file to import.');
+            return;
+        }
+        formData.append('file', fileInput.files[0]);
+    } else {
+        if (!currentSelectedFilepath) {
+            alert('Please select a file from folder scan list.');
+            return;
+        }
+        formData.append('filepath', currentSelectedFilepath);
     }
 
-    const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
     formData.append('table_name', tableName);
     formData.append('if_exists', ifExists);
     if (selectedSheet) formData.append('sheet_name', selectedSheet);
@@ -741,18 +828,95 @@ async function handleXlsxImport(e) {
         const data = await resp.json();
         if (resp.ok) {
             alert(`Successfully imported ${data.rows_imported} rows into table '${data.table_name}'!`);
-            fileInput.value = '';
             document.getElementById('xlsx-table-name').value = '';
             document.getElementById('xlsx-preview-container').classList.add('hidden');
             loadSchemaBrowser();
         } else {
-            alert('Import error: ' + (data.detail || 'Failed to import XLSX file'));
+            alert('Import error: ' + (data.detail || 'Failed to import file'));
         }
     } catch (err) {
-        alert('Network error during XLSX import.');
+        alert('Network error during file import.');
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-upload mr-2"></i> Import Excel Data to Database';
+        btn.innerHTML = '<i class="fa-solid fa-upload mr-2"></i> Import Excel / CSV Data to Database';
+    }
+}
+
+// Database Connection Config UI Logic
+function toggleDbConfigFields() {
+    const dbType = document.getElementById('cfg-db-type').value;
+    const pgGroup = document.getElementById('pg-fields-group');
+    if (dbType === 'sqlite') {
+        pgGroup.classList.add('hidden');
+    } else {
+        pgGroup.classList.remove('hidden');
+    }
+}
+
+async function loadDbConfig() {
+    try {
+        const resp = await fetch('/api/db-config');
+        const conf = await resp.json();
+
+        document.getElementById('cfg-db-type').value = conf.db_type || 'postgresql';
+        document.getElementById('cfg-server').value = conf.server || 'localhost';
+        document.getElementById('cfg-port').value = conf.port || '5432';
+        document.getElementById('cfg-dbname').value = conf.dbname || 'postgres';
+        document.getElementById('cfg-user').value = conf.user || 'postgres';
+        document.getElementById('cfg-schema').value = conf.schema || 'public';
+
+        toggleDbConfigFields();
+
+        const statusEl = document.getElementById('cfg-status-msg');
+        statusEl.textContent = `Active Engine: ${conf.active_target_url}`;
+        statusEl.className = 'text-xs font-mono text-emerald-400';
+    } catch (err) {
+        console.error('Error loading DB config:', err);
+    }
+}
+
+async function saveDatabaseConfig() {
+    const dbType = document.getElementById('cfg-db-type').value;
+    const server = document.getElementById('cfg-server').value.trim();
+    const port = document.getElementById('cfg-port').value.trim();
+    const dbname = document.getElementById('cfg-dbname').value.trim();
+    const user = document.getElementById('cfg-user').value.trim();
+    const password = document.getElementById('cfg-password').value;
+    const schema = document.getElementById('cfg-schema').value.trim();
+
+    const statusEl = document.getElementById('cfg-status-msg');
+    statusEl.textContent = 'Testing connection...';
+    statusEl.className = 'text-xs font-mono text-amber-400 animate-pulse';
+
+    try {
+        const resp = await fetch('/api/db-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                db_type: dbType,
+                server: server,
+                port: port,
+                dbname: dbname,
+                user: user,
+                password: password,
+                schema: schema
+            })
+        });
+
+        const data = await resp.json();
+        if (resp.ok) {
+            statusEl.textContent = `Connection successful! Target: ${data.target_url}`;
+            statusEl.className = 'text-xs font-mono text-emerald-400';
+            alert('Database connection updated successfully!');
+            loadSchemaBrowser();
+        } else {
+            statusEl.textContent = `Connection failed: ${data.detail}`;
+            statusEl.className = 'text-xs font-mono text-red-400';
+            alert('Database connection error: ' + (data.detail || 'Failed'));
+        }
+    } catch (err) {
+        statusEl.textContent = 'Network error testing database connection.';
+        statusEl.className = 'text-xs font-mono text-red-400';
     }
 }
 

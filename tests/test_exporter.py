@@ -60,3 +60,17 @@ def test_export_db_to_xlsx():
     assert list(df_read.columns) == ["product_id", "name", "price"]
     assert len(df_read) == 3
     assert df_read.iloc[0]["name"] == "Laptop"
+
+def test_csv_preview_and_import():
+    csv_content = b"col1,col2,col3\nval1,val2,100\nval3,val4,200"
+    preview = XLSXHandler.preview_xlsx(csv_content, filename="sample.csv")
+    assert preview["columns"] == ["col1", "col2", "col3"]
+    assert preview["total_rows"] == 2
+
+    res = XLSXHandler.export_xlsx_to_db(csv_content, table_name="csv_import_test", filename="sample.csv", if_exists="replace")
+    assert res["success"] is True
+    assert res["rows_imported"] == 2
+
+    schema = SchemaInspector.get_full_schema()
+    tbl_names = [t["table_name"] for t in schema["tables"]]
+    assert "csv_import_test" in tbl_names
