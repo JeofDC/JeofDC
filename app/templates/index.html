@@ -59,6 +59,10 @@
                             <i class="fa-solid fa-table text-amber-400"></i>
                             <span>DB Schema Browser</span>
                         </button>
+                        <button onclick="setActiveTab('xlsx-tools')" id="nav-xlsx-tools" class="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700">
+                            <i class="fa-solid fa-file-excel text-emerald-400"></i>
+                            <span>XLSX Import / Export</span>
+                        </button>
                     </nav>
                 </div>
 
@@ -363,6 +367,95 @@
                             <!-- Populated dynamically -->
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- TAB 6: XLSX Import / Export Tools -->
+            <div id="tab-xlsx-tools" class="tab-content hidden bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-sm">
+                <div class="border-b border-slate-700 pb-4 mb-6">
+                    <h2 class="text-lg font-bold text-white flex items-center">
+                        <i class="fa-solid fa-file-excel text-emerald-400 mr-2"></i> XLSX Data Import & Export Engine
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1">Export Excel datasets into database tables or download PostgreSQL database tables as XLSX files.</p>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Import XLSX to Database Section -->
+                    <div class="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-4">
+                        <h3 class="text-sm font-semibold text-emerald-400 flex items-center">
+                            <i class="fa-solid fa-file-import mr-2"></i> Import XLSX into Target Database
+                        </h3>
+
+                        <form id="xlsx-import-form" onsubmit="handleXlsxImport(event)" class="space-y-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-300 mb-1">Select Excel File (.xlsx)</label>
+                                <input type="file" id="xlsx-file-input" accept=".xlsx, .xls" onchange="handleXlsxFileSelect()" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500">
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-300 mb-1">Target Table Name</label>
+                                    <input type="text" id="xlsx-table-name" required placeholder="e.g. sales_data" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-300 mb-1">If Table Exists</label>
+                                    <select id="xlsx-if-exists" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100">
+                                        <option value="append">Append Rows</option>
+                                        <option value="replace">Replace Table (Overwrite)</option>
+                                        <option value="fail">Fail If Exists</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Sheet selection if multiple -->
+                            <div id="xlsx-sheet-select-group" class="hidden">
+                                <label class="block text-xs font-semibold text-slate-300 mb-1">Select Sheet Name</label>
+                                <select id="xlsx-sheet-select" onchange="previewSelectedSheet()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100">
+                                </select>
+                            </div>
+
+                            <!-- Data Preview Box -->
+                            <div id="xlsx-preview-container" class="hidden space-y-2">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-xs font-semibold text-slate-300">File Preview</span>
+                                    <span id="xlsx-row-count" class="text-[11px] text-slate-400 font-mono"></span>
+                                </div>
+                                <div class="overflow-x-auto bg-slate-950 border border-slate-800 rounded-lg p-2">
+                                    <table class="w-full text-left text-[11px] text-slate-300">
+                                        <thead id="xlsx-preview-thead" class="text-slate-400 uppercase text-[10px] border-b border-slate-800"></thead>
+                                        <tbody id="xlsx-preview-tbody" class="divide-y divide-slate-800"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <button type="submit" id="xlsx-import-btn" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs py-2 px-4 rounded-lg transition shadow-md flex items-center justify-center">
+                                <i class="fa-solid fa-upload mr-2"></i> Import Excel Data to Database
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Export Database Table to XLSX Section -->
+                    <div class="bg-slate-900 border border-slate-700 rounded-xl p-5 space-y-4 flex flex-col justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold text-indigo-400 flex items-center mb-3">
+                                <i class="fa-solid fa-file-export mr-2"></i> Export Database Table to XLSX
+                            </h3>
+                            <p class="text-xs text-slate-400 mb-4">Select an active database table from target storage to export as a formatted `.xlsx` file.</p>
+
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-300 mb-1">Target Table To Export</label>
+                                    <select id="export-table-select" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100">
+                                        <!-- Populated dynamically -->
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button type="button" onclick="handleXlsxExport()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs py-2 px-4 rounded-lg transition shadow-md flex items-center justify-center mt-6">
+                            <i class="fa-solid fa-file-arrow-down mr-2"></i> Export & Download XLSX
+                        </button>
+                    </div>
                 </div>
             </div>
 

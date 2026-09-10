@@ -96,3 +96,57 @@ def test_api_cancellation_flow():
     cancel_resp = client.post(f"/api/requests/{req_id}/cancel")
     assert cancel_resp.status_code == 200
     assert cancel_resp.json()["status"] == "CANCELLED"
+
+def test_api_xlsx_preview_and_import():
+    import io
+    import pandas as pd
+
+    df = pd.DataFrame({"id": [1, 2], "label": ["A", "B"]})
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Data", index=False)
+    file_bytes = buf.getvalue()
+
+    # Test preview API endpoint
+    preview_resp = client.post(
+        "/api/xlsx/preview",
+        files={"file": ("test.xlsx", file_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    )
+    assert preview_resp.status_code == 200
+    p_data = preview_resp.json()
+    assert p_data["columns"] == ["id", "label"]
+    assert p_data["total_rows"] == 2
+
+    # Test import API endpoint
+    import_resp = client.post(
+        "/api/xlsx/import",
+        data={"table_name": "api_import_tbl", "if_exists": "replace"},
+        files={"file": ("test.xlsx", file_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    )
+    assert import_resp.status_code == 200
+    i_data = import_resp.json()
+    assert i_data["success"] is True
+    assert i_data["rows_imported"] == 2
+
+def test_api_xlsx_export():
+    import io
+    import pandas as pd
+
+    df = pd.DataFrame({"code": ["X1", "X2"], "value": [10, 20]})
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+    file_bytes = buf.getvalue()
+
+    # Seed data via import
+    client.post(
+        "/api/xlsx/import",
+        data={"table_name": "api_export_tbl", "if_exists": "replace"},
+        files={"file": ("test.xlsx", file_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    )
+
+    # Test export API endpoint
+    export_resp = client.get("/api/xlsx/export/api_export_tbl")
+    assert export_resp.status_code == 200
+    assert export_resp.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert len(export_resp.content) > 0

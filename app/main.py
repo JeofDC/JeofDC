@@ -1,7 +1,8 @@
 import os
 import datetime
 from typing import List, Optional, Any, Dict
-from fastapi import FastAPI, Depends, HTTPException, Query, status
+from fastapi import FastAPI, Depends, HTTPException, Query, status, UploadFile, File, Form
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
@@ -12,6 +13,7 @@ from app.models import (
     init_db, get_db, DBARequest, ExecutionLog, RequestType, RequestStatus
 )
 from app.engine import SQLGenerator, AutomationEngine, SchemaInspector
+from app.exporter import XLSXHandler
 
 # Initialize databases
 init_db()
@@ -189,3 +191,56 @@ def cancel_request(request_id: int, db: Session = Depends(get_db)):
 @app.get("/api/schema")
 def get_schema():
     return SchemaInspector.get_full_schema()
+
+# XLSX Import/Export API Endpoints
+@app.post("/api/xlsx/preview")
+async def preview_xlsx_endpoint(file: UploadFile = File(...), sheet_name: Optional[str] = Form(None)):
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Uploaded file must be an Excel spreadsheet (.xlsx or .xls)")
+    try:
+        content = await file.read()
+        result = XLSXHandler.preview_xlsx(content, sheet_name=sheet_name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to preview Excel file: {str(e)}")
+
+@app.post("/api/xlsx/import")
+async def import_xlsx_endpoint(
+    file: UploadFile = File(...),
+    table_name: str = Form(...),
+    if_exists: str = Form("append"),
+    sheet_name: Optional[str] = Form(None)
+):
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Uploaded file must be an Excel spreadsheet (.xlsx or .xls)")
+    if not table_name.strip():
+        raise HTTPException(status_code=400, detail="Target table name is required.")
+    if if_exists not in ["append", "replace", "fail"]:
+        raise HTTPException(status_code=400, detail="if_exists must be one of: append, replace, fail")
+
+    try:
+        content = await file.read()
+        res = XLSXHandler.export_xlsx_to_db(
+            file_content=content,
+            table_name=table_name.strip(),
+            if_exists=if_exists,
+            sheet_name=sheet_name
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to import XLSX into database table: {str(e)}")
+
+@app.get("/api/xlsx/export/{table_name}")
+def export_xlsx_endpoint(table_name: str):
+    try:
+        xlsx_data = XLSXHandler.export_db_to_xlsx(table_name=table_name)
+        headers = {
+            'Content-Disposition': f'attachment; filename="{table_name}_export.xlsx"'
+        }
+        return Response(
+            content=xlsx_data,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers=headers
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to export table '{table_name}' to XLSX: {str(e)}")
