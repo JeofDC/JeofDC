@@ -1,197 +1,331 @@
+import random
+import csv
+import io
 import datetime
-from sqlalchemy import inspect, text
+from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+
 from app.models import (
-    target_engine, RequestType, RequestStatus, DBARequest, ExecutionLog
+    User, ApplicantProfile, Question, Exam, ExamQuestion,
+    ExamAssignment, Attempt, Answer, AssessmentEvent,
+    AssignmentStatus, AttemptStatus, QuestionCategory
 )
 
-class SQLGenerator:
-    """Generates valid SQL DDL/DML statements based on request types and structured parameters."""
+class QuestionEngine:
+    """Manages question retrieval, candidate view masking, and randomization."""
 
     @staticmethod
-    def generate_sql(request_type: str, details: dict) -> str:
-        if request_type == RequestType.CREATE_TABLE:
-            table_name = details.get("table_name", "").strip()
-            columns = details.get("columns", [])
-            if not table_name:
-                raise ValueError("Table name is required for CREATE_TABLE.")
-            if not columns:
-                raise ValueError("At least one column is required for CREATE_TABLE.")
+    def prepare_attempt_structure(exam: Exam, db: Session) -> tuple[List[int], Dict[int, List[Dict[str, Any]]]]:
+        """
+        Retrieves exam questions and returns (question_order, choices_order) according to exam settings.
+        """
+        eqs = db.query(ExamQuestion).filter(ExamQuestion.exam_id == exam.id).order_by(ExamQuestion.order.asc()).all()
+        questions = [eq.question for eq in eqs if eq.question]
 
-            col_defs = []
-            for col in columns:
-                c_name = col.get("name", "").strip()
-                c_type = col.get("type", "TEXT").upper().strip()
-                c_pk = " PRIMARY KEY" if col.get("primary_key") else ""
-                c_auto = " AUTOINCREMENT" if col.get("autoincrement") and col.get("primary_key") else ""
-                c_nn = " NOT NULL" if col.get("not_null") and not col.get("primary_key") else ""
-                c_unique = " UNIQUE" if col.get("unique") else ""
-                c_default = f" DEFAULT '{col.get('default')}'" if col.get("default") is not None and col.get("default") != "" else ""
-                col_defs.append(f"  {c_name} {c_type}{c_pk}{c_auto}{c_nn}{c_unique}{c_default}")
+        question_ids = [q.id for q in questions]
+        if exam.randomize_questions:
+            random.shuffle(question_ids)
 
-            sql = f"CREATE TABLE {table_name} (\n" + ",\n".join(col_defs) + "\n);"
-            return sql
-
-        elif request_type == RequestType.ALTER_TABLE:
-            table_name = details.get("table_name", "").strip()
-            action = details.get("action", "ADD_COLUMN") # ADD_COLUMN, RENAME_TABLE
-            if not table_name:
-                raise ValueError("Table name is required for ALTER_TABLE.")
-
-            if action == "ADD_COLUMN":
-                col = details.get("column", {})
-                c_name = col.get("name", "").strip()
-                c_type = col.get("type", "TEXT").upper().strip()
-                c_nn = " NOT NULL" if col.get("not_null") else ""
-                c_default = f" DEFAULT '{col.get('default')}'" if col.get("default") is not None and col.get("default") != "" else ""
-                return f"ALTER TABLE {table_name} ADD COLUMN {c_name} {c_type}{c_nn}{c_default};"
-
-            elif action == "RENAME_TABLE":
-                new_name = details.get("new_table_name", "").strip()
-                if not new_name:
-                    raise ValueError("New table name is required for RENAME_TABLE.")
-                return f"ALTER TABLE {table_name} RENAME TO {new_name};"
-
+        choices_order = {}
+        for q in questions:
+            q_choices = q.choices if q.choices else []
+            if exam.randomize_choices and len(q_choices) > 1:
+                # Copy list and shuffle
+                c_copy = list(q_choices)
+                random.shuffle(c_copy)
+                choices_order[q.id] = c_copy
             else:
-                raise ValueError(f"Unsupported alter table action: {action}")
+                choices_order[q.id] = q_choices
 
-        elif request_type == RequestType.DROP_TABLE:
-            table_name = details.get("table_name", "").strip()
-            if not table_name:
-                raise ValueError("Table name is required for DROP_TABLE.")
-            return f"DROP TABLE IF EXISTS {table_name};"
-
-        elif request_type == RequestType.GRANT_ACCESS:
-            username = details.get("username", "").strip()
-            target_object = details.get("target_object", "").strip() # e.g. table name or *
-            permission = details.get("permission", "READ").upper().strip() # READ, WRITE, ADMIN
-            if not username or not target_object:
-                raise ValueError("Username and Target Object are required for GRANT_ACCESS.")
-
-            # Simulated RBAC recorded into target database metadata table
-            return f"INSERT INTO _dba_user_permissions (username, target_object, permission_level) VALUES ('{username}', '{target_object}', '{permission}');"
-
-        elif request_type == RequestType.CUSTOM_SQL:
-            sql_query = details.get("sql_query", "").strip()
-            if not sql_query:
-                raise ValueError("SQL query cannot be empty for CUSTOM_SQL.")
-            return sql_query
-
-        else:
-            raise ValueError(f"Unknown request type: {request_type}")
-
-class AutomationEngine:
-    """Validates, processes, and automatically executes approved DBA requests on target databases."""
+        return question_ids, choices_order
 
     @staticmethod
-    def execute_request(db_session, request_obj: DBARequest) -> bool:
+    def format_question_for_candidate(question: Question, custom_choices: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
-        Executes the SQL associated with the DBA request in a safe database transaction.
-        Updates request status and appends execution logs.
+        Formats question dict safe for applicant view (removes correct_answer and explanation).
         """
-        sql_to_run = request_obj.generated_sql
-        if not sql_to_run:
-            # Generate if missing
-            sql_to_run = SQLGenerator.generate_sql(request_obj.request_type, request_obj.details)
-            request_obj.generated_sql = sql_to_run
+        choices = custom_choices if custom_choices is not None else (question.choices or [])
+        return {
+            "id": question.id,
+            "category": question.category,
+            "subcategory": question.subcategory,
+            "difficulty": question.difficulty,
+            "question_type": question.question_type,
+            "question_text": question.question_text,
+            "passage_text": question.passage_text,
+            "diagram_svg": question.diagram_svg,
+            "points": question.points,
+            "time_limit_seconds": question.time_limit_seconds,
+            "choices": choices
+        }
 
-        request_obj.status = RequestStatus.EXECUTING
-        db_session.commit()
 
-        # Execute statement on target DB
-        try:
-            # We support multiple statements separated by ';'
-            statements = [s.strip() for s in sql_to_run.split(";") if s.strip()]
-
-            with target_engine.connect() as conn:
-                for stmt in statements:
-                    conn.exec_driver_sql(stmt)
-                conn.commit()
-
-            # Record successful execution
-            request_obj.status = RequestStatus.COMPLETED
-            request_obj.executed_at = datetime.datetime.utcnow()
-            request_obj.error_log = None
-
-            log = ExecutionLog(
-                request_id=request_obj.id,
-                sql_executed=sql_to_run,
-                status="SUCCESS",
-                output_message="Executed successfully on target database."
-            )
-            db_session.add(log)
-            db_session.commit()
-            return True
-
-        except Exception as e:
-            err_msg = str(e)
-            request_obj.status = RequestStatus.FAILED
-            request_obj.error_log = err_msg
-
-            log = ExecutionLog(
-                request_id=request_obj.id,
-                sql_executed=sql_to_run,
-                status="ERROR",
-                output_message=err_msg
-            )
-            db_session.add(log)
-            db_session.commit()
-            return False
-
-class SchemaInspector:
-    """Inspects target database schema, tables, columns, indexes, and user permissions."""
+class ScoringEngine:
+    """Handles answer evaluation, score calculation across categories/difficulties, and pass/fail thresholds."""
 
     @staticmethod
-    def get_full_schema():
-        inspector = inspect(target_engine)
-        tables_info = []
+    def evaluate_attempt(db: Session, attempt: Attempt) -> Dict[str, Any]:
+        exam = db.query(Exam).filter(Exam.id == attempt.exam_id).first()
+        answers = db.query(Answer).filter(Answer.attempt_id == attempt.id).all()
+        answers_by_qid = {ans.question_id: ans for ans in answers}
 
-        table_names = inspector.get_table_names()
-        for t_name in table_names:
-            if t_name == "_dba_user_permissions":
+        eqs = db.query(ExamQuestion).filter(ExamQuestion.exam_id == attempt.exam_id).all()
+        q_ids = [eq.question_id for eq in eqs]
+        questions = db.query(Question).filter(Question.id.in_(q_ids)).all() if q_ids else []
+
+        total_score = 0.0
+        max_score = 0.0
+
+        category_stats = {
+            QuestionCategory.ABSTRACT.value: {"score": 0.0, "max": 0.0, "correct": 0, "total": 0},
+            QuestionCategory.VERBAL.value: {"score": 0.0, "max": 0.0, "correct": 0, "total": 0},
+            QuestionCategory.NUMERICAL.value: {"score": 0.0, "max": 0.0, "correct": 0, "total": 0}
+        }
+
+        difficulty_stats = {
+            "Easy": {"score": 0.0, "max": 0.0, "correct": 0, "total": 0},
+            "Medium": {"score": 0.0, "max": 0.0, "correct": 0, "total": 0},
+            "Hard": {"score": 0.0, "max": 0.0, "correct": 0, "total": 0}
+        }
+
+        num_correct = 0
+        num_incorrect = 0
+        num_unanswered = 0
+
+        for q in questions:
+            q_pts = q.points or 1.0
+            max_score += q_pts
+
+            # Setup category & difficulty dicts if custom category exists
+            if q.category not in category_stats:
+                category_stats[q.category] = {"score": 0.0, "max": 0.0, "correct": 0, "total": 0}
+            category_stats[q.category]["max"] += q_pts
+            category_stats[q.category]["total"] += 1
+
+            if q.difficulty not in difficulty_stats:
+                difficulty_stats[q.difficulty] = {"score": 0.0, "max": 0.0, "correct": 0, "total": 0}
+            difficulty_stats[q.difficulty]["max"] += q_pts
+            difficulty_stats[q.difficulty]["total"] += 1
+
+            ans = answers_by_qid.get(q.id)
+            if not ans:
+                num_unanswered += 1
                 continue
 
-            columns = []
-            for col in inspector.get_columns(t_name):
-                columns.append({
-                    "name": col["name"],
-                    "type": str(col["type"]),
-                    "nullable": col.get("nullable", True),
-                    "default": str(col.get("default")) if col.get("default") is not None else None,
-                    "primary_key": col.get("primary_key", 0) > 0
-                })
+            user_resp = ans.selected_choice if ans.selected_choice is not None else ans.numeric_answer
+            if user_resp is None or str(user_resp).strip() == "":
+                ans.is_correct = False
+                ans.score_awarded = 0.0
+                num_unanswered += 1
+                continue
 
-            foreign_keys = inspector.get_foreign_keys(t_name)
-            fk_list = []
-            for fk in foreign_keys:
-                fk_list.append({
-                    "constrained_columns": fk.get("constrained_columns"),
-                    "referred_table": fk.get("referred_table"),
-                    "referred_columns": fk.get("referred_columns")
-                })
+            # Compare answer
+            correct = False
+            user_resp_clean = str(user_resp).strip().lower()
+            correct_clean = str(q.correct_answer).strip().lower()
 
-            tables_info.append({
-                "table_name": t_name,
-                "columns": columns,
-                "foreign_keys": fk_list
-            })
+            if q.question_type in ["multiple_choice", "true_false", "visual_reasoning"]:
+                correct = (user_resp_clean == correct_clean)
+            elif q.question_type == "numeric":
+                try:
+                    # Allow float comparison within small tolerance or string match
+                    correct = abs(float(user_resp_clean) - float(correct_clean)) < 1e-4
+                except ValueError:
+                    correct = (user_resp_clean == correct_clean)
 
-        # Fetch permissions
-        permissions = []
-        try:
-            with target_engine.connect() as conn:
-                res = conn.execute(text("SELECT id, username, target_object, permission_level, granted_at FROM _dba_user_permissions ORDER BY id DESC"))
-                for row in res:
-                    permissions.append({
-                        "id": row.id,
-                        "username": row.username,
-                        "target_object": row.target_object,
-                        "permission_level": row.permission_level,
-                        "granted_at": str(row.granted_at)
-                    })
-        except Exception:
-            pass
+            if correct:
+                ans.is_correct = True
+                ans.score_awarded = q_pts
+                total_score += q_pts
+                num_correct += 1
+
+                category_stats[q.category]["score"] += q_pts
+                category_stats[q.category]["correct"] += 1
+                difficulty_stats[q.difficulty]["score"] += q_pts
+                difficulty_stats[q.difficulty]["correct"] += 1
+            else:
+                ans.is_correct = False
+                ans.score_awarded = 0.0
+                num_incorrect += 1
+
+        percentage = (total_score / max_score * 100.0) if max_score > 0 else 0.0
+        passed = None
+        if exam and exam.passing_score is not None:
+            passed = (percentage >= exam.passing_score)
+
+        attempt.total_score = round(total_score, 2)
+        attempt.max_score = round(max_score, 2)
+        attempt.percentage_score = round(percentage, 2)
+        attempt.passed = passed
+        attempt.status = AttemptStatus.COMPLETED.value
+        if not attempt.submitted_at:
+            attempt.submitted_at = datetime.datetime.utcnow()
+
+        if attempt.start_time:
+            time_diff = (attempt.submitted_at - attempt.start_time).total_seconds()
+            attempt.time_taken_seconds = max(int(time_diff), 0)
+
+        db.commit()
+
+        # Build percentage results for category and difficulty
+        for cat, data in category_stats.items():
+            data["percentage"] = round((data["score"] / data["max"] * 100.0), 2) if data["max"] > 0 else 0.0
+
+        for diff, data in difficulty_stats.items():
+            data["percentage"] = round((data["score"] / data["max"] * 100.0), 2) if data["max"] > 0 else 0.0
 
         return {
-            "tables": tables_info,
-            "permissions": permissions
+            "total_score": round(total_score, 2),
+            "max_score": round(max_score, 2),
+            "percentage_score": round(percentage, 2),
+            "passed": passed,
+            "num_correct": num_correct,
+            "num_incorrect": num_incorrect,
+            "num_unanswered": num_unanswered,
+            "time_taken_seconds": attempt.time_taken_seconds,
+            "category_scores": category_stats,
+            "difficulty_scores": difficulty_stats
         }
+
+
+class AnalyticsEngine:
+    """Generates corporate assessment analytics, chart datasets, and CSV export."""
+
+    @staticmethod
+    def get_dashboard_analytics(
+        db: Session,
+        exam_id: Optional[int] = None,
+        applicant_id: Optional[int] = None,
+        category_filter: Optional[str] = None,
+        status_filter: Optional[str] = None
+    ) -> Dict[str, Any]:
+
+        # Total applicants
+        total_applicants = db.query(User).filter(User.role == "applicant").count()
+
+        # Assignments query
+        assignments_query = db.query(ExamAssignment)
+        if exam_id:
+            assignments_query = assignments_query.filter(ExamAssignment.exam_id == exam_id)
+        if applicant_id:
+            assignments_query = assignments_query.filter(ExamAssignment.applicant_id == applicant_id)
+        if status_filter:
+            assignments_query = assignments_query.filter(ExamAssignment.status == status_filter)
+
+        assignments = assignments_query.all()
+        total_assigned = len(assignments)
+
+        completed_count = sum(1 for a in assignments if a.status == AssignmentStatus.COMPLETED.value)
+        in_progress_count = sum(1 for a in assignments if a.status == AssignmentStatus.IN_PROGRESS.value)
+        not_started_count = sum(1 for a in assignments if a.status == AssignmentStatus.NOT_STARTED.value)
+        expired_count = sum(1 for a in assignments if a.status == AssignmentStatus.EXPIRED.value)
+
+        completion_rate = round((completed_count / total_assigned * 100.0), 2) if total_assigned > 0 else 0.0
+
+        # Attempts query for completed scores
+        attempts_query = db.query(Attempt).filter(Attempt.status == AttemptStatus.COMPLETED.value)
+        if exam_id:
+            attempts_query = attempts_query.filter(Attempt.exam_id == exam_id)
+        if applicant_id:
+            attempts_query = attempts_query.filter(Attempt.applicant_id == applicant_id)
+
+        completed_attempts = attempts_query.all()
+        avg_score = round(sum(a.percentage_score for a in completed_attempts) / len(completed_attempts), 2) if completed_attempts else 0.0
+
+        pass_count = sum(1 for a in completed_attempts if a.passed is True)
+        pass_rate = round((pass_count / len(completed_attempts) * 100.0), 2) if completed_attempts else 0.0
+
+        # Score distribution
+        score_dist = {
+            "0-50%": 0,
+            "51-70%": 0,
+            "71-85%": 0,
+            "86-100%": 0
+        }
+        for att in completed_attempts:
+            p = att.percentage_score
+            if p <= 50.0:
+                score_dist["0-50%"] += 1
+            elif p <= 70.0:
+                score_dist["51-70%"] += 1
+            elif p <= 85.0:
+                score_dist["71-85%"] += 1
+            else:
+                score_dist["86-100%"] += 1
+
+        # Calculate category performance averages across answers in completed attempts
+        cat_performance = {
+            QuestionCategory.ABSTRACT.value: {"total_pts": 0.0, "earned_pts": 0.0, "avg_percentage": 0.0},
+            QuestionCategory.VERBAL.value: {"total_pts": 0.0, "earned_pts": 0.0, "avg_percentage": 0.0},
+            QuestionCategory.NUMERICAL.value: {"total_pts": 0.0, "earned_pts": 0.0, "avg_percentage": 0.0}
+        }
+
+        if completed_attempts:
+            attempt_ids = [a.id for a in completed_attempts]
+            answers = db.query(Answer).filter(Answer.attempt_id.in_(attempt_ids)).all()
+            for ans in answers:
+                q = ans.question
+                if not q:
+                    continue
+                cat = q.category
+                if cat not in cat_performance:
+                    cat_performance[cat] = {"total_pts": 0.0, "earned_pts": 0.0, "avg_percentage": 0.0}
+                cat_performance[cat]["total_pts"] += q.points or 1.0
+                cat_performance[cat]["earned_pts"] += ans.score_awarded or 0.0
+
+            for cat, c_data in cat_performance.items():
+                if c_data["total_pts"] > 0:
+                    c_data["avg_percentage"] = round((c_data["earned_pts"] / c_data["total_pts"] * 100.0), 2)
+
+        return {
+            "total_applicants": total_applicants,
+            "total_assigned": total_assigned,
+            "completed_count": completed_count,
+            "in_progress_count": in_progress_count,
+            "not_started_count": not_started_count,
+            "expired_count": expired_count,
+            "completion_rate": completion_rate,
+            "average_score": avg_score,
+            "pass_rate": pass_rate,
+            "score_distribution": score_dist,
+            "category_performance": cat_performance
+        }
+
+    @staticmethod
+    def export_results_csv(db: Session) -> str:
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        writer.writerow([
+            "Attempt ID", "Applicant Name", "Applicant Email", "Applied Position",
+            "Exam Title", "Access Code", "Status", "Percentage Score", "Raw Score",
+            "Max Score", "Passed", "Time Taken (mins)", "Submitted At"
+        ])
+
+        attempts = db.query(Attempt).order_by(Attempt.id.desc()).all()
+        for att in attempts:
+            user = att.applicant
+            profile = user.profile if user else None
+            exam = db.query(Exam).filter(Exam.id == att.exam_id).first()
+            assignment = att.assignment
+
+            name = user.full_name if user else "N/A"
+            email = user.email if user else "N/A"
+            pos = profile.applied_position if profile else "N/A"
+            exam_title = exam.title if exam else "N/A"
+            code = assignment.access_code if assignment else "N/A"
+            status = att.status
+            pct = att.percentage_score
+            raw = att.total_score
+            max_s = att.max_score
+            passed = "PASSED" if att.passed is True else ("FAILED" if att.passed is False else "N/A")
+            mins = round(att.time_taken_seconds / 60.0, 1) if att.time_taken_seconds else 0.0
+            sub_at = att.submitted_at.strftime("%Y-%m-%d %H:%M:%S") if att.submitted_at else "N/A"
+
+            writer.writerow([
+                att.id, name, email, pos, exam_title, code, status,
+                f"{pct}%", raw, max_s, passed, mins, sub_at
+            ])
+
+        return output.getvalue()

@@ -1,74 +1,53 @@
-import os
 import pytest
 from app.models import (
-    init_db, SessionLocal, target_engine, DBARequest, RequestType, RequestStatus
+    init_db, Base, engine, SessionLocal, Question, Exam, ExamAssignment, Attempt, Answer, User
 )
-from app.engine import SQLGenerator, AutomationEngine, SchemaInspector
+from app.engine import QuestionEngine, ScoringEngine, AnalyticsEngine
 
 @pytest.fixture(autouse=True)
-def clean_target_db():
+def clean_db():
+    Base.metadata.drop_all(bind=engine)
     init_db()
-    # Drop all user tables created during tests
-    with target_engine.connect() as conn:
-        inspector = SchemaInspector.get_full_schema()
-        for tbl in inspector["tables"]:
-            conn.exec_driver_sql(f"DROP TABLE IF EXISTS {tbl['table_name']};")
-        conn.commit()
 
-def test_sql_generator_create_table():
-    details = {
-        "table_name": "products",
-        "columns": [
-            {"name": "id", "type": "INTEGER", "primary_key": True, "autoincrement": True},
-            {"name": "title", "type": "VARCHAR(255)", "not_null": True},
-            {"name": "price", "type": "REAL", "default": "0.0"}
-        ]
-    }
-    sql = SQLGenerator.generate_sql(RequestType.CREATE_TABLE, details)
-    assert "CREATE TABLE products" in sql
-    assert "id INTEGER PRIMARY KEY AUTOINCREMENT" in sql
-    assert "title VARCHAR(255) NOT NULL" in sql
-    assert "price REAL DEFAULT '0.0'" in sql
-
-def test_sql_generator_alter_table():
-    details = {
-        "table_name": "products",
-        "action": "ADD_COLUMN",
-        "column": {"name": "stock", "type": "INTEGER", "default": "0"}
-    }
-    sql = SQLGenerator.generate_sql(RequestType.ALTER_TABLE, details)
-    assert sql == "ALTER TABLE products ADD COLUMN stock INTEGER DEFAULT '0';"
-
-def test_sql_generator_grant_access():
-    details = {
-        "username": "data_dev",
-        "target_object": "products",
-        "permission": "READ"
-    }
-    sql = SQLGenerator.generate_sql(RequestType.GRANT_ACCESS, details)
-    assert "INSERT INTO _dba_user_permissions" in sql
-    assert "data_dev" in sql
-    assert "products" in sql
-
-def test_automation_engine_execute():
+def test_question_engine_masking_and_randomization():
     db = SessionLocal()
-    req = DBARequest(
-        developer_name="TestDev",
-        request_type=RequestType.CREATE_TABLE,
-        title="Create test_logs table",
-        details={
-            "table_name": "test_logs",
-            "columns": [{"name": "id", "type": "INTEGER", "primary_key": True}]
-        }
-    )
-    db.add(req)
-    db.commit()
+    try:
+        exam = db.query(Exam).first()
+        q_ids, choices_order = QuestionEngine.prepare_attempt_structure(exam, db)
+        assert len(q_ids) > 0
+        assert isinstance(choices_order, dict)
 
-    success = AutomationEngine.execute_request(db, req)
-    assert success is True
-    assert req.status == RequestStatus.COMPLETED
-    assert req.executed_at is not None
+        q = db.query(Question).first()
+        masked = QuestionEngine.format_question_for_candidate(q)
+        assert "correct_answer" not in masked
+        assert "explanation" not in masked
+        assert masked["question_text"] == q.question_text
+    finally:
+        db.close()
 
-    schema = SchemaInspector.get_full_schema()
-    table_names = [t["table_name"] for t in schema["tables"]]
-    assert "test_logs" in table_names
+def test_scoring_engine():
+    db = SessionLocal()
+    try:
+        attempt = db.query(Attempt).first()
+        result = ScoringEngine.evaluate_attempt(db, attempt)
+        assert "total_score" in result
+        assert "percentage_score" in result
+        assert "category_scores" in result
+        assert result["percentage_score"] >= 0.0
+        assert result["passed"] is True
+    finally:
+        db.close()
+
+def test_analytics_and_csv_export():
+    db = SessionLocal()
+    try:
+        analytics = AnalyticsEngine.get_dashboard_analytics(db)
+        assert analytics["total_applicants"] >= 1
+        assert "category_performance" in analytics
+        assert "score_distribution" in analytics
+
+        csv_str = AnalyticsEngine.export_results_csv(db)
+        assert "Attempt ID" in csv_str
+        assert "John Doe" in csv_str
+    finally:
+        db.close()
