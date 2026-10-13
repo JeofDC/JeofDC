@@ -189,3 +189,41 @@ def cancel_request(request_id: int, db: Session = Depends(get_db)):
 @app.get("/api/schema")
 def get_schema():
     return SchemaInspector.get_full_schema()
+
+@app.get("/api/rbac/roles")
+def get_rbac_roles():
+    schema = SchemaInspector.get_full_schema()
+    return schema.get("roles", [])
+
+@app.get("/api/rbac/memberships")
+def get_rbac_memberships():
+    schema = SchemaInspector.get_full_schema()
+    return schema.get("memberships", [])
+
+@app.get("/api/rbac/permissions")
+def get_rbac_permissions():
+    schema = SchemaInspector.get_full_schema()
+    return schema.get("permissions", [])
+
+@app.get("/api/rbac/matrix")
+def get_rbac_matrix():
+    schema = SchemaInspector.get_full_schema()
+    roles = schema.get("roles", [])
+    memberships = schema.get("memberships", [])
+    permissions = schema.get("permissions", [])
+
+    # Construct role hierarchy tree / inheritance dictionary
+    inheritance = {}
+    for m in memberships:
+        member = m["member_name"]
+        parent = m["parent_role"]
+        if member not in inheritance:
+            inheritance[member] = []
+        inheritance[member].append(parent)
+
+    return {
+        "roles": roles,
+        "memberships": memberships,
+        "permissions": permissions,
+        "inheritance": inheritance
+    }

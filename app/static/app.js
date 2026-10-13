@@ -58,6 +58,8 @@ function setActiveTab(tabId) {
         loadDBAQueue();
     } else if (tabId === 'schema-browser') {
         loadSchemaBrowser();
+    } else if (tabId === 'rbac-dashboard') {
+        loadRBACMatrix();
     } else if (tabId === 'new-request') {
         loadSchemaBrowser(); // to refresh table dropdowns
     }
@@ -184,6 +186,37 @@ function extractFormDetails() {
     } else if (reqType === 'DROP_TABLE') {
         const table_name = document.getElementById('drop-table-select').value;
         details = { table_name };
+
+    } else if (reqType === 'CREATE_ROLE') {
+        const role_name = document.getElementById('role-name-input').value.trim();
+        const can_login = document.getElementById('role-login-select').value === 'true';
+        const password = document.getElementById('role-password-input').value.trim();
+        details = { role_name, can_login, password };
+
+    } else if (reqType === 'ASSIGN_ROLE') {
+        const member_name = document.getElementById('assign-member-input').value.trim();
+        const parent_role = document.getElementById('assign-role-input').value.trim();
+        details = { member_name, parent_role };
+
+    } else if (reqType === 'GRANT_PRIVILEGE') {
+        const grantee = document.getElementById('grant-grantee-input').value.trim();
+        const schema_name = document.getElementById('grant-schema-input').value.trim() || 'public';
+        const target_type = document.getElementById('grant-target-type').value;
+        const privileges = document.getElementById('grant-privileges-select').value;
+        details = { grantee, schema_name, target_type, privileges };
+
+    } else if (reqType === 'REVOKE_PRIVILEGE') {
+        const grantee = document.getElementById('revoke-grantee-input').value.trim();
+        const schema_name = document.getElementById('revoke-schema-input').value.trim() || 'public';
+        const target_type = document.getElementById('revoke-target-type').value;
+        const privileges = document.getElementById('revoke-privileges-select').value;
+        details = { grantee, schema_name, target_type, privileges };
+
+    } else if (reqType === 'SET_DEFAULT_PRIVILEGES') {
+        const grantee = document.getElementById('def-grantee-input').value.trim();
+        const schema_name = document.getElementById('def-schema-input').value.trim() || 'public';
+        const privileges = document.getElementById('def-privileges-select').value;
+        details = { grantee, schema_name, privileges };
 
     } else if (reqType === 'GRANT_ACCESS') {
         const username = document.getElementById('grant-username').value.trim();
@@ -607,13 +640,13 @@ async function loadSchemaBrowser() {
         const permBody = document.getElementById('schema-permissions-body');
         if (permBody) {
             permBody.innerHTML = '';
-            if (schema.permissions.length === 0) {
+            if (!schema.permissions || schema.permissions.length === 0) {
                 permBody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-slate-500 italic">No permission grants recorded.</td></tr>`;
             } else {
                 schema.permissions.forEach(p => {
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
-                        <td class="p-2.5 font-semibold text-slate-200">${escapeHtml(p.username)}</td>
+                        <td class="p-2.5 font-semibold text-slate-200">${escapeHtml(p.grantee || p.username)}</td>
                         <td class="p-2.5 font-mono text-indigo-300">${escapeHtml(p.target_object)}</td>
                         <td class="p-2.5"><span class="bg-emerald-900/60 text-emerald-300 font-mono text-[10px] px-2 py-0.5 rounded">${p.permission_level}</span></td>
                         <td class="p-2.5 text-slate-400 text-[11px]">${p.granted_at}</td>
@@ -625,6 +658,82 @@ async function loadSchemaBrowser() {
 
     } catch (err) {
         console.error('Error loading schema browser:', err);
+    }
+}
+
+async function loadRBACMatrix() {
+    try {
+        const resp = await fetch('/api/rbac/matrix');
+        const data = await resp.json();
+
+        // 1. Roles list
+        const rolesList = document.getElementById('rbac-roles-list');
+        if (rolesList) {
+            rolesList.innerHTML = '';
+            if (data.roles.length === 0) {
+                rolesList.innerHTML = `<p class="text-slate-500 italic">No DW roles created yet.</p>`;
+            } else {
+                data.roles.forEach(r => {
+                    const div = document.createElement('div');
+                    div.className = 'flex items-center justify-between p-2 bg-slate-950 rounded border border-slate-800';
+                    div.innerHTML = `
+                        <div class="flex items-center space-x-2">
+                            <span class="font-mono font-bold text-cyan-300">${escapeHtml(r.role_name)}</span>
+                            <span class="text-[10px] px-1.5 py-0.5 rounded ${r.can_login ? 'bg-indigo-900/60 text-indigo-300' : 'bg-slate-800 text-slate-400'}">${r.can_login ? 'USER (LOGIN)' : 'ROLE (NOLOGIN)'}</span>
+                        </div>
+                        <span class="text-[10px] text-slate-500">${r.created_at}</span>
+                    `;
+                    rolesList.appendChild(div);
+                });
+            }
+        }
+
+        // 2. Memberships
+        const memList = document.getElementById('rbac-memberships-list');
+        if (memList) {
+            memList.innerHTML = '';
+            if (data.memberships.length === 0) {
+                memList.innerHTML = `<p class="text-slate-500 italic">No role assignments recorded.</p>`;
+            } else {
+                data.memberships.forEach(m => {
+                    const div = document.createElement('div');
+                    div.className = 'flex items-center justify-between p-2 bg-slate-950 rounded border border-slate-800';
+                    div.innerHTML = `
+                        <div class="flex items-center space-x-2">
+                            <strong class="text-white">${escapeHtml(m.member_name)}</strong>
+                            <i class="fa-solid fa-arrow-right text-slate-500 text-[10px]"></i>
+                            <span class="font-mono text-indigo-400">${escapeHtml(m.parent_role)}</span>
+                        </div>
+                        <span class="text-[10px] text-slate-500">${m.granted_at}</span>
+                    `;
+                    memList.appendChild(div);
+                });
+            }
+        }
+
+        // 3. Permissions Table
+        const permTbody = document.getElementById('rbac-permissions-table-body');
+        if (permTbody) {
+            permTbody.innerHTML = '';
+            if (data.permissions.length === 0) {
+                permTbody.innerHTML = `<tr><td colspan="5" class="p-3 text-center text-slate-500 italic">No privileges granted.</td></tr>`;
+            } else {
+                data.permissions.forEach(p => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td class="p-2.5 font-semibold text-slate-200">${escapeHtml(p.grantee)}</td>
+                        <td class="p-2.5 font-mono text-slate-400">${escapeHtml(p.schema_name || 'public')}</td>
+                        <td class="p-2.5 font-mono text-indigo-300">${escapeHtml(p.target_object)}</td>
+                        <td class="p-2.5"><span class="bg-emerald-900/60 text-emerald-300 font-mono text-[10px] px-2 py-0.5 rounded">${escapeHtml(p.permission_level)}</span></td>
+                        <td class="p-2.5 text-slate-400 text-[11px]">${p.granted_at}</td>
+                    `;
+                    permTbody.appendChild(tr);
+                });
+            }
+        }
+
+    } catch (err) {
+        console.error('Error loading RBAC matrix:', err);
     }
 }
 
