@@ -11,6 +11,11 @@ class RequestType(str, enum.Enum):
     ALTER_TABLE = "ALTER_TABLE"
     DROP_TABLE = "DROP_TABLE"
     GRANT_ACCESS = "GRANT_ACCESS"
+    CREATE_ROLE = "CREATE_ROLE"
+    ASSIGN_ROLE = "ASSIGN_ROLE"
+    GRANT_PRIVILEGE = "GRANT_PRIVILEGE"
+    REVOKE_PRIVILEGE = "REVOKE_PRIVILEGE"
+    SET_DEFAULT_PRIVILEGES = "SET_DEFAULT_PRIVILEGES"
     CUSTOM_SQL = "CUSTOM_SQL"
 
 class RequestStatus(str, enum.Enum):
@@ -71,16 +76,44 @@ target_engine = create_engine(TARGET_DB_URL, connect_args={"check_same_thread": 
 
 def init_db():
     Base.metadata.create_all(bind=app_engine)
-    # Ensure target DB has user_permissions table for RBAC/access grants simulation
+    # Ensure target DB has tables for PostgreSQL Data Warehouse RBAC simulation
     with target_engine.connect() as conn:
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS _dba_roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role_name TEXT UNIQUE NOT NULL,
+                role_type TEXT NOT NULL DEFAULT 'ROLE', -- 'ROLE' or 'USER'
+                can_login INTEGER NOT NULL DEFAULT 0,   -- 1 for LOGIN, 0 for NOLOGIN
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS _dba_role_memberships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                member_name TEXT NOT NULL,              -- User or Role name
+                parent_role TEXT NOT NULL,              -- Parent Role granted to member
+                granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(member_name, parent_role)
+            );
+        """)
+        try:
+            conn.exec_driver_sql("ALTER TABLE _dba_user_permissions RENAME COLUMN username TO grantee;")
+        except Exception:
+            pass
+        try:
+            conn.exec_driver_sql("ALTER TABLE _dba_user_permissions ADD COLUMN schema_name TEXT NOT NULL DEFAULT 'public';")
+        except Exception:
+            pass
+
         conn.exec_driver_sql("""
             CREATE TABLE IF NOT EXISTS _dba_user_permissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                target_object TEXT NOT NULL,
-                permission_level TEXT NOT NULL,
+                grantee TEXT NOT NULL,                 -- Role or User
+                schema_name TEXT NOT NULL DEFAULT 'public',
+                target_object TEXT NOT NULL,           -- e.g. 'ALL TABLES', 'table_name', or 'SCHEMA'
+                permission_level TEXT NOT NULL,        -- e.g. 'SELECT', 'INSERT', 'USAGE', 'ALL PRIVILEGES'
                 granted_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
+            );
         """)
         conn.commit()
 
