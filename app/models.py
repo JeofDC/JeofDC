@@ -60,14 +60,51 @@ class ExecutionLog(Base):
 
     request = relationship("DBARequest", back_populates="execution_logs")
 
-# Engine and session creation
-APP_DB_URL = "sqlite:///./app_meta.db"
-TARGET_DB_URL = "sqlite:///./target_managed.db"
+class Employee(Base):
+    __tablename__ = "employees"
 
-app_engine = create_engine(APP_DB_URL, connect_args={"check_same_thread": False})
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(String(100), unique=True, index=True, nullable=False)
+    first_name = Column(String(100), nullable=True)
+    last_name = Column(String(100), nullable=True)
+    email = Column(String(200), nullable=True)
+    department = Column(String(100), nullable=True)
+    designation = Column(String(100), nullable=True)
+    status = Column(String(50), nullable=True, default="Active")
+    raw_data = Column(JSON, nullable=True, default={})
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+class SyncLog(Base):
+    __tablename__ = "sync_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(50), nullable=False) # SUCCESS, FAILED, IN_PROGRESS
+    total_records = Column(Integer, default=0)
+    message = Column(Text, nullable=True)
+    error_details = Column(Text, nullable=True)
+    started_at = Column(DateTime, default=datetime.datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+# Engine and session creation
+import os
+
+APP_DB_URL = os.getenv("POSTGRES_URL") or os.getenv("DATABASE_URL") or "sqlite:///./app_meta.db"
+if APP_DB_URL.startswith("postgres://"):
+    APP_DB_URL = APP_DB_URL.replace("postgres://", "postgresql://", 1)
+
+TARGET_DB_URL = os.getenv("TARGET_DB_URL") or "sqlite:///./target_managed.db"
+if TARGET_DB_URL.startswith("postgres://"):
+    TARGET_DB_URL = TARGET_DB_URL.replace("postgres://", "postgresql://", 1)
+
+app_connect_args = {"check_same_thread": False} if "sqlite" in APP_DB_URL else {}
+target_connect_args = {"check_same_thread": False} if "sqlite" in TARGET_DB_URL else {}
+
+app_engine = create_engine(APP_DB_URL, connect_args=app_connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=app_engine)
 
-target_engine = create_engine(TARGET_DB_URL, connect_args={"check_same_thread": False})
+target_engine = create_engine(TARGET_DB_URL, connect_args=target_connect_args)
 
 def init_db():
     Base.metadata.create_all(bind=app_engine)

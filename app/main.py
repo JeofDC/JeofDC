@@ -9,9 +9,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.models import (
-    init_db, get_db, DBARequest, ExecutionLog, RequestType, RequestStatus
+    init_db, get_db, DBARequest, ExecutionLog, RequestType, RequestStatus, Employee, SyncLog
 )
 from app.engine import SQLGenerator, AutomationEngine, SchemaInspector
+from app.sync_engine import DarwinboxSyncEngine
 
 # Initialize databases
 init_db()
@@ -42,7 +43,38 @@ class CreateRequestInput(BaseModel):
 class RequestActionInput(BaseModel):
     dba_notes: Optional[str] = None
 
+class EmployeeSyncInput(BaseModel):
+    api_key: str
+    datasetKey: str
+    authorization: str
+    api_url: Optional[str] = None
+
 from pydantic import ConfigDict
+
+class EmployeeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    employee_id: str
+    first_name: Optional[str]
+    last_name: Optional[str]
+    email: Optional[str]
+    department: Optional[str]
+    designation: Optional[str]
+    status: Optional[str]
+    raw_data: Optional[Dict[str, Any]]
+    updated_at: datetime.datetime
+
+class SyncLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: str
+    total_records: int
+    message: Optional[str]
+    error_details: Optional[str]
+    started_at: datetime.datetime
+    completed_at: Optional[datetime.datetime]
 
 class ExecutionLogResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -189,3 +221,42 @@ def cancel_request(request_id: int, db: Session = Depends(get_db)):
 @app.get("/api/schema")
 def get_schema():
     return SchemaInspector.get_full_schema()
+
+# Employee Sync Endpoints
+@app.post("/api/employee-sync/trigger", response_model=SyncLogResponse)
+def trigger_employee_sync(data: EmployeeSyncInput, db: Session = Depends(get_db)):
+    if not data.api_key or not data.datasetKey or not data.authorization:
+        raise HTTPException(status_code=400, detail="api_key, datasetKey, and authorization are required.")
+
+    sync_log = DarwinboxSyncEngine.process_and_sync(
+        db=db,
+        api_key=data.api_key,
+        dataset_key=data.datasetKey,
+        authorization=data.authorization,
+        api_url=data.api_url
+    )
+    return sync_log
+
+@app.get("/api/employees", response_model=List[EmployeeResponse])
+def list_employees(
+    query: Optional[str] = Query(None),
+    department: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    q = db.query(Employee)
+    if query:
+        search = f"%{query}%"
+        q = q.filter(
+            (Employee.employee_id.ilike(search)) |
+            (Employee.first_name.ilike(search)) |
+            (Employee.last_name.ilike(search)) |
+            (Employee.email.ilike(search))
+        )
+    if department:
+        q = q.filter(Employee.department.ilike(f"%{department}%"))
+
+    return q.order_by(Employee.id.desc()).all()
+
+@app.get("/api/employee-sync/logs", response_model=List[SyncLogResponse])
+def list_sync_logs(db: Session = Depends(get_db)):
+    return db.query(SyncLog).order_by(SyncLog.id.desc()).all()

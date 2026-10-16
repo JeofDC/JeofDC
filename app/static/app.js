@@ -58,6 +58,9 @@ function setActiveTab(tabId) {
         loadDBAQueue();
     } else if (tabId === 'schema-browser') {
         loadSchemaBrowser();
+    } else if (tabId === 'employee-sync') {
+        loadEmployeeDirectory();
+        loadSyncLogs();
     } else if (tabId === 'new-request') {
         loadSchemaBrowser(); // to refresh table dropdowns
     }
@@ -655,6 +658,171 @@ function getStatusBadge(status) {
         default:
             return `<span class="bg-slate-800 text-slate-300 text-[10px] px-2 py-0.5 rounded">${status}</span>`;
     }
+}
+
+async function handleEmployeeSyncTrigger(e) {
+    e.preventDefault();
+
+    const apiUrl = document.getElementById('sync-api-url').value.trim();
+    const authorization = document.getElementById('sync-authorization').value.trim();
+    const apiKey = document.getElementById('sync-api-key').value.trim();
+    const datasetKey = document.getElementById('sync-dataset-key').value.trim();
+
+    const btn = document.getElementById('sync-btn');
+    const icon = document.getElementById('sync-icon');
+
+    btn.disabled = true;
+    icon.className = 'fa-solid fa-spinner fa-spin mr-2';
+
+    try {
+        const resp = await fetch('/api/employee-sync/trigger', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                api_url: apiUrl,
+                authorization: authorization,
+                api_key: apiKey,
+                datasetKey: datasetKey
+            })
+        });
+
+        const data = await resp.json();
+
+        if (resp.ok) {
+            if (data.status === 'SUCCESS') {
+                alert(`Sync completed! ${data.total_records} employee record(s) synced to database.`);
+            } else {
+                alert(`Sync finished with issue: ${data.message || data.error_details || 'Failed'}`);
+            }
+            loadEmployeeDirectory();
+            loadSyncLogs();
+        } else {
+            alert('Error triggering employee sync: ' + (data.detail || 'Failed'));
+        }
+    } catch (err) {
+        alert('Network error triggering employee sync.');
+    } finally {
+        btn.disabled = false;
+        icon.className = 'fa-solid fa-arrows-rotate mr-2';
+    }
+}
+
+async function loadEmployeeDirectory() {
+    const query = document.getElementById('emp-search-input')?.value.trim() || '';
+    let url = '/api/employees';
+    if (query) url += `?query=${encodeURIComponent(query)}`;
+
+    try {
+        const resp = await fetch(url);
+        const employees = await resp.json();
+
+        const tbody = document.getElementById('employee-table-body');
+        if (!tbody) return;
+
+        tbody.innerHTML = '';
+
+        if (employees.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="p-8 text-center text-slate-400 italic">
+                        No employees found in database. Trigger sync above to download records from Darwinbox.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        employees.forEach(emp => {
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-800/50 transition-colors';
+
+            const fullName = `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || 'N/A';
+            const rawJsonStr = JSON.stringify(emp.raw_data || {}, null, 2);
+
+            tr.innerHTML = `
+                <td class="p-3 font-mono font-bold text-cyan-400">${escapeHtml(emp.employee_id)}</td>
+                <td class="p-3 font-semibold text-slate-100">${escapeHtml(fullName)}</td>
+                <td class="p-3 font-mono text-slate-300 text-[11px]">${escapeHtml(emp.email || 'N/A')}</td>
+                <td class="p-3 text-slate-300">${escapeHtml(emp.department || 'N/A')}</td>
+                <td class="p-3 text-slate-300">${escapeHtml(emp.designation || 'N/A')}</td>
+                <td class="p-3">
+                    <span class="bg-emerald-900/60 text-emerald-300 text-[10px] px-2 py-0.5 rounded-full border border-emerald-700/50 font-medium">
+                        ${escapeHtml(emp.status || 'Active')}
+                    </span>
+                </td>
+                <td class="p-3 text-right">
+                    <button onclick="viewRawEmployeeJson('${escapeHtml(emp.employee_id)}', ${escapeHtml(JSON.stringify(rawJsonStr))})" class="bg-slate-700 hover:bg-slate-600 text-cyan-300 hover:text-white px-2 py-1 rounded text-[11px]">
+                        <i class="fa-solid fa-code mr-1"></i> View JSON
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+    } catch (err) {
+        console.error('Error loading employee directory:', err);
+    }
+}
+
+async function loadSyncLogs() {
+    try {
+        const resp = await fetch('/api/employee-sync/logs');
+        const logs = await resp.json();
+
+        const tbody = document.getElementById('sync-logs-table-body');
+        if (!tbody) return;
+
+        tbody.innerHTML = '';
+
+        if (logs.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-500 italic">No sync execution logs recorded.</td></tr>`;
+            return;
+        }
+
+        logs.forEach(log => {
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-800/50 transition-colors';
+
+            let statusBadge = '';
+            if (log.status === 'SUCCESS') {
+                statusBadge = `<span class="bg-emerald-900/60 text-emerald-300 font-semibold text-[10px] px-2 py-0.5 rounded-full border border-emerald-700/50">SUCCESS</span>`;
+            } else if (log.status === 'FAILED') {
+                statusBadge = `<span class="bg-red-900/60 text-red-300 font-semibold text-[10px] px-2 py-0.5 rounded-full border border-red-700/50">FAILED</span>`;
+            } else {
+                statusBadge = `<span class="bg-amber-900/60 text-amber-300 font-semibold text-[10px] px-2 py-0.5 rounded-full border border-amber-700/50">IN_PROGRESS</span>`;
+            }
+
+            tr.innerHTML = `
+                <td class="p-3 font-mono font-bold text-slate-400">#${log.id}</td>
+                <td class="p-3">${statusBadge}</td>
+                <td class="p-3 font-mono font-bold text-cyan-400">${log.total_records}</td>
+                <td class="p-3 text-slate-300">
+                    <div>${escapeHtml(log.message || '')}</div>
+                    ${log.error_details ? `<div class="text-red-400 font-mono text-[10px] mt-0.5">${escapeHtml(log.error_details)}</div>` : ''}
+                </td>
+                <td class="p-3 text-slate-400 text-[11px]">${new Date(log.started_at).toLocaleString()}</td>
+                <td class="p-3 text-slate-400 text-[11px] text-right">${log.completed_at ? new Date(log.completed_at).toLocaleString() : 'Pending'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+    } catch (err) {
+        console.error('Error loading sync logs:', err);
+    }
+}
+
+function viewRawEmployeeJson(empId, rawJsonStr) {
+    document.getElementById('modal-title').innerHTML = `
+        <span class="font-mono bg-slate-700 px-2 py-0.5 rounded text-cyan-300 text-xs mr-2">Emp ID: ${empId}</span>
+        Raw Darwinbox API Payload
+    `;
+
+    const modalContent = document.getElementById('modal-content');
+    modalContent.innerHTML = `
+        <pre class="bg-slate-950 p-4 rounded-lg border border-slate-800 font-mono text-xs text-emerald-400 overflow-x-auto max-h-96">${escapeHtml(rawJsonStr)}</pre>
+    `;
+
+    document.getElementById('details-modal').classList.remove('hidden');
 }
 
 function escapeHtml(str) {
